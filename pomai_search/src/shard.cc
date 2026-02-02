@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cmath>
 #include <mutex>
-#include <utility>
 
 namespace pomai_search {
 
@@ -89,8 +88,11 @@ StatusOr<std::vector<ResultItem>> Shard::Search(VectorView query, int topk, cons
     return Status(StatusCode::kInvalidArgument, "topk must be positive");
   }
   std::shared_lock<std::shared_mutex> lock(mutex_);
-  std::vector<Candidate> best;
-  best.reserve(static_cast<size_t>(topk));
+  std::vector<Candidate> heap;
+  heap.reserve(static_cast<size_t>(topk));
+  auto worse_first = [](const Candidate& a, const Candidate& b) {
+    return IsBetter(a, b);
+  };
   for (const auto& item : items_) {
     if (item.deleted || IsExpired(item.expiry)) {
       continue;
@@ -102,28 +104,26 @@ StatusOr<std::vector<ResultItem>> Shard::Search(VectorView query, int topk, cons
     float score = dot_func_(query.data, data, dim_);
     if (similarity_ == SearchEngineConfig::Similarity::Cosine) {
       if (item.norm == 0.0f || query_norm == 0.0f) {
-        continue;
+        score = 0.0f;
+      } else {
+        score = score / (item.norm * query_norm);
       }
-      score = score / (item.norm * query_norm);
     }
     Candidate cand{score, &item};
-    if (static_cast<int>(best.size()) < topk) {
-      best.push_back(cand);
+    if (static_cast<int>(heap.size()) < topk) {
+      heap.push_back(cand);
+      std::push_heap(heap.begin(), heap.end(), worse_first);
       continue;
     }
-    auto worst_it = best.begin();
-    for (auto it = best.begin(); it != best.end(); ++it) {
-      if (IsBetter(*worst_it, *it)) {
-        worst_it = it;
-      }
-    }
-    if (IsBetter(cand, *worst_it)) {
-      *worst_it = cand;
+    if (IsBetter(cand, heap.front())) {
+      std::pop_heap(heap.begin(), heap.end(), worse_first);
+      heap.back() = cand;
+      std::push_heap(heap.begin(), heap.end(), worse_first);
     }
   }
   std::vector<ResultItem> results;
-  results.reserve(best.size());
-  for (const auto& cand : best) {
+  results.reserve(heap.size());
+  for (const auto& cand : heap) {
     ResultItem item;
     item.key = cand.item->key;
     item.score = cand.score;

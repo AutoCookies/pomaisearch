@@ -16,6 +16,7 @@ class SearchEngine {
  public:
   struct QueryOptions {
     int topk;
+    // Local scope restricts vector searches to shard 0. SearchByKey uses the key owner shard.
     enum class Scope { Local, Global };
     Scope scope;
     Metadata filter_equals;
