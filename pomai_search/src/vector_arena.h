@@ -13,6 +13,8 @@ class VectorArena {
 
   size_t Append(const float* data);
   const float* Get(size_t offset) const;
+  const float* data() const { return data_.data(); }
+  size_t alignment() const { return data_.get_allocator().alignment(); }
   size_t size() const { return count_; }
 
  private:

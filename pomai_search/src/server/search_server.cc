@@ -1,310 +1,237 @@
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <optional>
-#include <string>
-#include <string_view>
-#include <vector>
+#include <sstream>
 
-#include "pomai_search/logging.h"
+#include "net/http_server.h"
+#include "net/json.h"
 #include "pomai_search/search_engine.h"
-#include "pomai_search/status.h"
 #include "pomai_search/types.h"
-#include "server/http_server.h"
-#include "server/json.h"
 
-namespace pomai_search {
+using pomai_search::HttpRequest;
+using pomai_search::HttpResponse;
+using pomai_search::JsonEscape;
+using pomai_search::JsonValue;
+using pomai_search::ParseJson;
+using pomai_search::SearchEngine;
+using pomai_search::SearchEngineConfig;
 
-static std::string StatusToJson(const Status& status) {
-  return std::string("{\"ok\":false,\"code\":\"") + status.ToString() + "\"}";
+namespace {
+
+std::string ErrorBody(const std::string& message) {
+  return "{\"error\":\"" + JsonEscape(message) + "\"}";
 }
 
-static std::optional<std::string> GetString(const JsonValue& value) {
-  if (value.type != JsonValue::Type::String) {
-    return std::nullopt;
-  }
-  return value.string_value;
-}
-
-static std::optional<double> GetNumber(const JsonValue& value) {
-  if (value.type != JsonValue::Type::Number) {
-    return std::nullopt;
-  }
-  return value.number_value;
-}
-
-static std::vector<float> ParseVector(const JsonValue& value) {
-  std::vector<float> out;
-  if (value.type != JsonValue::Type::Array) {
-    return out;
-  }
-  out.reserve(value.array_value.size());
-  for (const auto& element : value.array_value) {
-    if (element.type != JsonValue::Type::Number) {
-      return {};
-    }
-    out.push_back(static_cast<float>(element.number_value));
-  }
-  return out;
-}
-
-static Metadata ParseMetadata(const JsonValue& value) {
-  Metadata meta;
-  if (value.type != JsonValue::Type::Object) {
-    return meta;
-  }
-  for (const auto& pair : value.object_value) {
-    if (pair.second.type == JsonValue::Type::String) {
-      meta.emplace(pair.first, pair.second.string_value);
+pomai_search::SearchEngine::QueryOptions::Scope ParseScope(const JsonValue& root) {
+  std::string scope;
+  if (pomai_search::GetStringField(root, "scope", &scope)) {
+    if (scope == "local") {
+      return pomai_search::SearchEngine::QueryOptions::Scope::Local;
     }
   }
+  return pomai_search::SearchEngine::QueryOptions::Scope::Global;
+}
+
+bool ParseVector(const JsonValue& root, int dim, std::vector<float>* vec, std::string* error) {
+  if (!pomai_search::GetFloatArrayField(root, "vector", vec)) {
+    *error = "missing vector";
+    return false;
+  }
+  if (static_cast<int>(vec->size()) != dim) {
+    *error = "vector dimension mismatch";
+    return false;
+  }
+  return true;
+}
+
+pomai_search::Metadata ParseMetadata(const JsonValue& root) {
+  pomai_search::Metadata meta;
+  pomai_search::GetStringMapField(root, "metadata", &meta);
   return meta;
 }
 
-static std::string ResultsToJson(const std::vector<ResultItem>& results) {
-  std::string json = "{\"results\":[";
-  bool first = true;
-  for (const auto& item : results) {
-    if (!first) {
-      json += ",";
+std::string SerializeResults(const std::vector<pomai_search::ResultItem>& results) {
+  std::ostringstream oss;
+  oss << "{\"results\":[";
+  for (size_t i = 0; i < results.size(); ++i) {
+    const auto& item = results[i];
+    if (i > 0) {
+      oss << ",";
     }
-    first = false;
-    json += "{\"key\":\"" + item.key + "\",\"score\":" + std::to_string(item.score) + ",\"meta\":{";
-    bool first_meta = true;
-    for (const auto& meta : item.meta) {
-      if (!first_meta) {
-        json += ",";
+    oss << "{\"key\":\"" << JsonEscape(item.key) << "\",\"score\":" << item.score;
+    if (!item.meta.empty()) {
+      oss << ",\"metadata\":{";
+      bool first = true;
+      for (const auto& [k, v] : item.meta) {
+        if (!first) {
+          oss << ",";
+        }
+        first = false;
+        oss << "\"" << JsonEscape(k) << "\":\"" << JsonEscape(v) << "\"";
       }
-      first_meta = false;
-      json += "\"" + meta.first + "\":\"" + meta.second + "\"";
+      oss << "}";
     }
-    json += "}}";
+    oss << "}";
   }
-  json += "]}";
-  return json;
+  oss << "]}";
+  return oss.str();
 }
 
-static std::string StatsToJson(const SearchEngine::Stats& stats) {
-  std::string json = "{";
-  json += "\"num_points\":" + std::to_string(stats.num_points) + ",";
-  json += "\"num_deleted\":" + std::to_string(stats.num_deleted) + ",";
-  json += "\"last_query_ms_p50\":" + std::to_string(stats.last_query_ms_p50);
-  json += "}";
-  return json;
-}
-
-}  // namespace pomai_search
+}  // namespace
 
 int main(int argc, char** argv) {
-  using namespace pomai_search;
-  SearchEngineConfig config;
-  config.dim = 0;
+  SearchEngineConfig cfg;
   int port = 8080;
+  cfg.num_shards = 4;
+  cfg.query_threads = 4;
+  cfg.ingest_threads = 4;
+  cfg.topk_default = 10;
+  cfg.similarity = SearchEngineConfig::Similarity::Dot;
   for (int i = 1; i < argc; ++i) {
-    std::string_view arg(argv[i]);
-    auto next = [&]() -> std::optional<std::string_view> {
-      if (i + 1 >= argc) {
-        return std::nullopt;
+    std::string arg = argv[i];
+    if (arg == "--dim" && i + 1 < argc) {
+      cfg.dim = std::atoi(argv[++i]);
+    } else if (arg == "--port" && i + 1 < argc) {
+      port = std::atoi(argv[++i]);
+    } else if (arg == "--shards" && i + 1 < argc) {
+      cfg.num_shards = std::atoi(argv[++i]);
+    } else if (arg == "--threads" && i + 1 < argc) {
+      cfg.query_threads = std::atoi(argv[++i]);
+      cfg.ingest_threads = cfg.query_threads;
+    } else if (arg == "--topk" && i + 1 < argc) {
+      cfg.topk_default = std::atoi(argv[++i]);
+    } else if (arg == "--similarity" && i + 1 < argc) {
+      std::string sim = argv[++i];
+      if (sim == "cosine") {
+        cfg.similarity = SearchEngineConfig::Similarity::Cosine;
       }
-      return std::string_view(argv[++i]);
-    };
-    if (arg == "--dim") {
-      auto value = next();
-      if (!value) {
-        std::cerr << "--dim requires value\n";
-        return 1;
-      }
-      config.dim = std::stoi(std::string(*value));
-    } else if (arg == "--shards") {
-      auto value = next();
-      if (value) {
-        config.num_shards = std::stoi(std::string(*value));
-      }
-    } else if (arg == "--similarity") {
-      auto value = next();
-      if (value && *value == "cosine") {
-        config.similarity = SearchEngineConfig::Similarity::Cosine;
-      } else {
-        config.similarity = SearchEngineConfig::Similarity::Dot;
-      }
-    } else if (arg == "--port") {
-      auto value = next();
-      if (value) {
-        port = std::stoi(std::string(*value));
-      }
-    } else if (arg == "--threads") {
-      auto value = next();
-      if (value) {
-        config.query_threads = std::stoi(std::string(*value));
-      }
-    } else if (arg == "--avx2") {
-      auto value = next();
-      if (value && *value == "off") {
-        config.enable_avx2 = false;
-      }
+    } else if (arg == "--avx2" && i + 1 < argc) {
+      std::string enabled = argv[++i];
+      cfg.enable_avx2 = (enabled == "on");
     }
   }
-  if (config.dim <= 0) {
-    std::cerr << "--dim is required\n";
+  if (cfg.dim <= 0) {
+    std::cerr << "--dim is required" << std::endl;
     return 1;
   }
-
-  auto engine_result = SearchEngine::Open(config);
+  auto engine_result = SearchEngine::Open(cfg);
   if (!engine_result.ok()) {
-    std::cerr << engine_result.status().ToString() << "\n";
+    std::cerr << engine_result.status().ToString() << std::endl;
     return 1;
   }
   auto engine = std::move(engine_result.value());
-
-  HttpServer server(port);
-  server.AddHandler("POST", "/v1/upsert", [engine_ptr = engine.get()](const HttpRequest& request) {
-    auto json = ParseJson(request.body);
-    if (!json.ok()) {
-      return HttpResponse{400, StatusToJson(json.status())};
+  pomai_search::HttpServer server;
+  auto handler = [engine_ptr = engine.get(), cfg](const HttpRequest& req) {
+    HttpResponse resp;
+    if (req.path == "/v1/stats") {
+      auto stats = engine_ptr->GetStats();
+      std::ostringstream oss;
+      oss << "{\"num_points\":" << stats.num_points << ",\"num_deleted\":" << stats.num_deleted
+          << ",\"last_query_ms_p50\":" << stats.last_query_ms_p50 << "}";
+      resp.body = oss.str();
+      return resp;
     }
-    if (json.value().type != JsonValue::Type::Object) {
-      return HttpResponse{400, "{\"ok\":false,\"message\":\"invalid json\"}"};
+    if (req.method != "POST") {
+      resp.status = 404;
+      resp.body = ErrorBody("not found");
+      return resp;
     }
-    const auto& obj = json.value().object_value;
-    auto key_it = obj.find("key");
-    auto vector_it = obj.find("vector");
-    if (key_it == obj.end() || vector_it == obj.end()) {
-      return HttpResponse{400, "{\"ok\":false,\"message\":\"missing fields\"}"};
+    JsonValue root;
+    std::string error;
+    if (!ParseJson(req.body, &root, &error)) {
+      resp.status = 400;
+      resp.body = ErrorBody(error);
+      return resp;
     }
-    auto key = GetString(key_it->second);
-    if (!key) {
-      return HttpResponse{400, "{\"ok\":false,\"message\":\"invalid key\"}"};
-    }
-    std::vector<float> vec = ParseVector(vector_it->second);
-    if (vec.empty()) {
-      return HttpResponse{400, "{\"ok\":false,\"message\":\"invalid vector\"}"};
-    }
-    Metadata meta;
-    auto meta_it = obj.find("meta");
-    if (meta_it != obj.end()) {
-      meta = ParseMetadata(meta_it->second);
-    }
-    std::optional<std::chrono::milliseconds> ttl;
-    auto ttl_it = obj.find("ttl_ms");
-    if (ttl_it != obj.end()) {
-      auto ttl_val = GetNumber(ttl_it->second);
-      if (ttl_val) {
-        ttl = std::chrono::milliseconds(static_cast<int64_t>(*ttl_val));
+    if (req.path == "/v1/upsert") {
+      std::string key;
+      if (!pomai_search::GetStringField(root, "key", &key)) {
+        resp.status = 400;
+        resp.body = ErrorBody("missing key");
+        return resp;
       }
-    }
-    VectorView view{vec.data(), static_cast<int>(vec.size())};
-    Status status = engine_ptr->Upsert(*key, view, std::move(meta), ttl);
-    if (!status.ok()) {
-      return HttpResponse{400, StatusToJson(status)};
-    }
-    return HttpResponse{200, "{\"ok\":true}"};
-  });
-
-  server.AddHandler("POST", "/v1/delete", [engine_ptr = engine.get()](const HttpRequest& request) {
-    auto json = ParseJson(request.body);
-    if (!json.ok()) {
-      return HttpResponse{400, StatusToJson(json.status())};
-    }
-    if (json.value().type != JsonValue::Type::Object) {
-      return HttpResponse{400, "{\"ok\":false,\"message\":\"invalid json\"}"};
-    }
-    const auto& obj = json.value().object_value;
-    auto key_it = obj.find("key");
-    if (key_it == obj.end()) {
-      return HttpResponse{400, "{\"ok\":false,\"message\":\"missing key\"}"};
-    }
-    auto key = GetString(key_it->second);
-    if (!key) {
-      return HttpResponse{400, "{\"ok\":false,\"message\":\"invalid key\"}"};
-    }
-    Status status = engine_ptr->Delete(*key);
-    if (!status.ok()) {
-      return HttpResponse{404, StatusToJson(status)};
-    }
-    return HttpResponse{200, "{\"ok\":true}"};
-  });
-
-  server.AddHandler("POST", "/v1/search", [engine_ptr = engine.get()](const HttpRequest& request) {
-    auto json = ParseJson(request.body);
-    if (!json.ok()) {
-      return HttpResponse{400, StatusToJson(json.status())};
-    }
-    if (json.value().type != JsonValue::Type::Object) {
-      return HttpResponse{400, "{\"ok\":false,\"message\":\"invalid json\"}"};
-    }
-    const auto& obj = json.value().object_value;
-    auto vector_it = obj.find("vector");
-    if (vector_it == obj.end()) {
-      return HttpResponse{400, "{\"ok\":false,\"message\":\"missing vector\"}"};
-    }
-    std::vector<float> vec = ParseVector(vector_it->second);
-    if (vec.empty()) {
-      return HttpResponse{400, "{\"ok\":false,\"message\":\"invalid vector\"}"};
-    }
-    SearchEngine::QueryOptions options;
-    auto topk_it = obj.find("topk");
-    if (topk_it != obj.end()) {
-      auto val = GetNumber(topk_it->second);
-      if (val) {
-        options.topk = static_cast<int>(*val);
+      std::vector<float> vec;
+      if (!ParseVector(root, cfg.dim, &vec, &error)) {
+        resp.status = 400;
+        resp.body = ErrorBody(error);
+        return resp;
       }
-    }
-    auto filter_it = obj.find("filter");
-    if (filter_it != obj.end()) {
-      options.filter_equals = ParseMetadata(filter_it->second);
-    }
-    VectorView view{vec.data(), static_cast<int>(vec.size())};
-    auto result = engine_ptr->Search(view, options);
-    if (!result.ok()) {
-      return HttpResponse{400, StatusToJson(result.status())};
-    }
-    return HttpResponse{200, ResultsToJson(result.value())};
-  });
-
-  server.AddHandler("POST", "/v1/search_by_key", [engine_ptr = engine.get()](const HttpRequest& request) {
-    auto json = ParseJson(request.body);
-    if (!json.ok()) {
-      return HttpResponse{400, StatusToJson(json.status())};
-    }
-    if (json.value().type != JsonValue::Type::Object) {
-      return HttpResponse{400, "{\"ok\":false,\"message\":\"invalid json\"}"};
-    }
-    const auto& obj = json.value().object_value;
-    auto key_it = obj.find("key");
-    if (key_it == obj.end()) {
-      return HttpResponse{400, "{\"ok\":false,\"message\":\"missing key\"}"};
-    }
-    auto key = GetString(key_it->second);
-    if (!key) {
-      return HttpResponse{400, "{\"ok\":false,\"message\":\"invalid key\"}"};
-    }
-    SearchEngine::QueryOptions options;
-    auto topk_it = obj.find("topk");
-    if (topk_it != obj.end()) {
-      auto val = GetNumber(topk_it->second);
-      if (val) {
-        options.topk = static_cast<int>(*val);
+      int ttl_ms = 0;
+      std::optional<std::chrono::milliseconds> ttl;
+      if (pomai_search::GetIntField(root, "ttl_ms", &ttl_ms)) {
+        ttl = std::chrono::milliseconds(ttl_ms);
       }
+      auto status = engine_ptr->Upsert(key, {vec.data(), cfg.dim}, ParseMetadata(root), ttl);
+      if (!status.ok()) {
+        resp.status = 400;
+        resp.body = ErrorBody(status.ToString());
+      } else {
+        resp.body = "{\"status\":\"ok\"}";
+      }
+      return resp;
     }
-    auto filter_it = obj.find("filter");
-    if (filter_it != obj.end()) {
-      options.filter_equals = ParseMetadata(filter_it->second);
+    if (req.path == "/v1/delete") {
+      std::string key;
+      if (!pomai_search::GetStringField(root, "key", &key)) {
+        resp.status = 400;
+        resp.body = ErrorBody("missing key");
+        return resp;
+      }
+      auto status = engine_ptr->Delete(key);
+      if (!status.ok()) {
+        resp.status = 404;
+        resp.body = ErrorBody(status.ToString());
+      } else {
+        resp.body = "{\"status\":\"ok\"}";
+      }
+      return resp;
     }
-    auto result = engine_ptr->SearchByKey(*key, options);
-    if (!result.ok()) {
-      return HttpResponse{400, StatusToJson(result.status())};
+    if (req.path == "/v1/search" || req.path == "/v1/search_by_key") {
+      pomai_search::SearchEngine::QueryOptions options;
+      options.scope = ParseScope(root);
+      pomai_search::GetIntField(root, "topk", &options.topk);
+      pomai_search::GetStringMapField(root, "filter", &options.filter_equals);
+      if (req.path == "/v1/search") {
+        std::vector<float> vec;
+        if (!ParseVector(root, cfg.dim, &vec, &error)) {
+          resp.status = 400;
+          resp.body = ErrorBody(error);
+          return resp;
+        }
+        auto result = engine_ptr->Search({vec.data(), cfg.dim}, options);
+        if (!result.ok()) {
+          resp.status = 400;
+          resp.body = ErrorBody(result.status().ToString());
+          return resp;
+        }
+        resp.body = SerializeResults(result.value());
+        return resp;
+      }
+      std::string key;
+      if (!pomai_search::GetStringField(root, "key", &key)) {
+        resp.status = 400;
+        resp.body = ErrorBody("missing key");
+        return resp;
+      }
+      auto result = engine_ptr->SearchByKey(key, options);
+      if (!result.ok()) {
+        resp.status = 400;
+        resp.body = ErrorBody(result.status().ToString());
+        return resp;
+      }
+      resp.body = SerializeResults(result.value());
+      return resp;
     }
-    return HttpResponse{200, ResultsToJson(result.value())};
-  });
-
-  server.AddHandler("GET", "/v1/stats", [engine_ptr = engine.get()](const HttpRequest&) {
-    auto stats = engine_ptr->GetStats();
-    return HttpResponse{200, StatsToJson(stats)};
-  });
-
-  POMAI_LOG_INFO("pomai-searchd listening on port " + std::to_string(port));
-  if (!server.Start()) {
-    std::cerr << "Failed to start server\n";
+    resp.status = 404;
+    resp.body = ErrorBody("not found");
+    return resp;
+  };
+  if (!server.Start(port, handler, cfg.query_threads)) {
+    std::cerr << "Failed to start server" << std::endl;
     return 1;
   }
+  std::cout << "pomai-searchd listening on port " << port << std::endl;
+  server.Wait();
   return 0;
 }

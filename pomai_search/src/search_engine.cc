@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
-#include <numeric>
 #include <thread>
 
 #include "pomai_search/logging.h"
@@ -54,7 +53,7 @@ Status SearchEngine::Initialize(const SearchEngineConfig& cfg) {
     impl_->config.ingest_threads = impl_->config.num_shards;
   }
   impl_->config.topk_default = std::max(1, impl_->config.topk_default);
-  impl_->config.memory_alignment = std::max<size_t>(16, impl_->config.memory_alignment);
+  impl_->config.memory_alignment = std::max<size_t>(32, impl_->config.memory_alignment);
 
   impl_->avx2_enabled = impl_->config.enable_avx2 && CpuSupportsAvx2();
   if (impl_->avx2_enabled) {
@@ -87,6 +86,13 @@ static size_t HashKey(std::string_view key) {
 
 static int ShardForKey(std::string_view key, int num_shards) {
   return static_cast<int>(HashKey(key) % static_cast<size_t>(num_shards));
+}
+
+static int ShardForLocalQuery(int num_shards) {
+  if (num_shards <= 0) {
+    return 0;
+  }
+  return 0;
 }
 
 Status SearchEngine::Upsert(std::string_view key, VectorView vec, Metadata meta,
@@ -126,11 +132,25 @@ StatusOr<std::vector<ResultItem>> SearchEngine::Search(VectorView q, QueryOption
   }
   auto start = std::chrono::steady_clock::now();
   std::vector<std::future<StatusOr<std::vector<ResultItem>>>> futures;
-  futures.reserve(impl_->shards.size());
-  for (const auto& shard : impl_->shards) {
-    futures.emplace_back(impl_->query_pool->Submit([shard_ptr = shard.get(), q, topk, opt, query_norm]() {
+  std::vector<Shard*> shard_targets;
+  if (opt.scope == QueryOptions::Scope::Local) {
+    int shard_id = ShardForLocalQuery(impl_->config.num_shards);
+    shard_targets.push_back(impl_->shards[static_cast<size_t>(shard_id)].get());
+  } else {
+    shard_targets.reserve(impl_->shards.size());
+    for (const auto& shard : impl_->shards) {
+      shard_targets.push_back(shard.get());
+    }
+  }
+  futures.reserve(shard_targets.size());
+  for (const auto* shard : shard_targets) {
+    auto submitted = impl_->query_pool->Submit([shard_ptr = shard, q, topk, opt, query_norm]() {
       return shard_ptr->Search(q, topk, opt.filter_equals, query_norm);
-    }));
+    });
+    if (!submitted.ok()) {
+      return submitted.status();
+    }
+    futures.emplace_back(std::move(submitted.value()));
   }
   std::vector<ResultItem> merged;
   for (auto& future : futures) {
@@ -170,6 +190,14 @@ StatusOr<std::vector<ResultItem>> SearchEngine::SearchByKey(std::string_view key
   }
   auto& vec = vec_result.value();
   VectorView view{vec.data(), impl_->config.dim};
+  if (opt.scope == QueryOptions::Scope::Local) {
+    float query_norm = 0.0f;
+    if (impl_->config.similarity == SearchEngineConfig::Similarity::Cosine) {
+      query_norm = std::sqrt(impl_->dot_func(view.data, view.data, view.dim));
+    }
+    return impl_->shards[shard_id]->Search(view, opt.topk > 0 ? opt.topk : impl_->config.topk_default,
+                                           opt.filter_equals, query_norm);
+  }
   return Search(view, opt);
 }
 

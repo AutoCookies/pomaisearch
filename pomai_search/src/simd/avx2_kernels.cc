@@ -5,20 +5,21 @@
 namespace pomai_search {
 
 float DotAvx2(const float* a, const float* b, int dim) {
-  __m256 sum = _mm256_setzero_ps();
+  const int kStride = 8;
   int i = 0;
-  for (; i + 7 < dim; i += 8) {
+  __m256 sum = _mm256_setzero_ps();
+  for (; i + kStride <= dim; i += kStride) {
     __m256 va = _mm256_loadu_ps(a + i);
     __m256 vb = _mm256_loadu_ps(b + i);
     sum = _mm256_fmadd_ps(va, vb, sum);
   }
-  float buffer[8];
-  _mm256_storeu_ps(buffer, sum);
-  float result = buffer[0] + buffer[1] + buffer[2] + buffer[3] + buffer[4] + buffer[5] + buffer[6] + buffer[7];
+  alignas(32) float buf[8];
+  _mm256_store_ps(buf, sum);
+  float total = buf[0] + buf[1] + buf[2] + buf[3] + buf[4] + buf[5] + buf[6] + buf[7];
   for (; i < dim; ++i) {
-    result += a[i] * b[i];
+    total += a[i] * b[i];
   }
-  return result;
+  return total;
 }
 
 }  // namespace pomai_search

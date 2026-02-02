@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cassert>
+#include <cstdlib>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -37,22 +40,51 @@ class Status {
 template <typename T>
 class StatusOr {
  public:
-  StatusOr(const Status& status) : status_(status) {}
-  StatusOr(Status&& status) : status_(std::move(status)) {}
-  StatusOr(const T& value) : status_(Status::Ok()), value_(value), has_value_(true) {}
-  StatusOr(T&& value) : status_(Status::Ok()), value_(std::move(value)), has_value_(true) {}
+  StatusOr(const Status& status) : status_(status) { EnsureNotOk(); }
+  StatusOr(Status&& status) : status_(std::move(status)) { EnsureNotOk(); }
+  StatusOr(const T& value) : status_(Status::Ok()), value_(value) {}
+  StatusOr(T&& value) : status_(Status::Ok()), value_(std::move(value)) {}
+
+  StatusOr(const StatusOr& other) = default;
+  StatusOr(StatusOr&& other) noexcept = default;
+  StatusOr& operator=(const StatusOr& other) = default;
+  StatusOr& operator=(StatusOr&& other) noexcept = default;
 
   bool ok() const { return status_.ok(); }
+  explicit operator bool() const { return ok(); }
   const Status& status() const { return status_; }
 
-  const T& value() const & { return value_; }
-  T& value() & { return value_; }
-  T&& value() && { return std::move(value_); }
+  const T& value() const & { CheckOk(); return *value_; }
+  T& value() & { CheckOk(); return *value_; }
+  T&& value() && { CheckOk(); return std::move(*value_); }
+
+  const T& ValueOrDie() const & { return value(); }
+  T& ValueOrDie() & { return value(); }
+  T&& ValueOrDie() && { return std::move(*this).value(); }
+
+  T value_or(T default_value) const { return ok() ? *value_ : std::move(default_value); }
 
  private:
+  void EnsureNotOk() {
+    if (status_.ok()) {
+      status_ = Status(StatusCode::kInternal, "StatusOr constructed with OK status");
+#ifndef NDEBUG
+      assert(false && "StatusOr constructed with OK status");
+#endif
+    }
+  }
+
+  void CheckOk() const {
+    if (!ok()) {
+#ifndef NDEBUG
+      assert(false && "Accessed value of non-OK StatusOr");
+#endif
+      std::abort();
+    }
+  }
+
   Status status_{};
-  T value_{};
-  bool has_value_ = false;
+  std::optional<T> value_{};
 };
 
 }  // namespace pomai_search

@@ -10,8 +10,15 @@ ThreadPool::ThreadPool(size_t threads) {
 }
 
 ThreadPool::~ThreadPool() {
+  Shutdown();
+}
+
+Status ThreadPool::Shutdown() {
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (stop_) {
+      return Status::Ok();
+    }
     stop_ = true;
   }
   cv_.notify_all();
@@ -20,6 +27,7 @@ ThreadPool::~ThreadPool() {
       worker.join();
     }
   }
+  return Status::Ok();
 }
 
 void ThreadPool::WorkerLoop() {
