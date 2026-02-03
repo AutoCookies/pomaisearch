@@ -1,4 +1,4 @@
-#include "net/http_server.h"
+#include "pomai_search/net/http_server.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -7,10 +7,8 @@
 
 #include <cerrno>
 #include <cstring>
-#include <strings.h>
 #include <sstream>
-
-#include "thread_pool.h"
+#include <strings.h>
 
 namespace pomai_search {
 
@@ -33,8 +31,12 @@ const char* ReasonPhrase(int status) {
       return "Bad Request";
     case 404:
       return "Not Found";
+    case 429:
+      return "Too Many Requests";
     case 500:
       return "Internal Server Error";
+    case 503:
+      return "Service Unavailable";
     default:
       return "OK";
   }
@@ -48,7 +50,7 @@ HttpServer::~HttpServer() {
   Stop();
 }
 
-bool HttpServer::Start(int port, Handler handler, int worker_threads) {
+bool HttpServer::Start(int port, Handler handler, int worker_threads, size_t max_inflight) {
   if (running_.load()) {
     return false;
   }
@@ -73,8 +75,9 @@ bool HttpServer::Start(int port, Handler handler, int worker_threads) {
     return false;
   }
   handler_ = std::move(handler);
-  worker_threads_ = worker_threads > 0 ? worker_threads : 4;
-  pool_ = std::make_unique<ThreadPool>(static_cast<size_t>(worker_threads_));
+  int threads = worker_threads > 0 ? worker_threads : 4;
+  pool_ = std::make_unique<ThreadPool>(static_cast<size_t>(threads));
+  max_inflight_ = max_inflight > 0 ? max_inflight : static_cast<size_t>(threads) * 4;
   running_.store(true);
   accept_thread_ = std::thread([this]() { AcceptLoop(); });
   return true;
@@ -117,8 +120,20 @@ void HttpServer::AcceptLoop() {
       }
       break;
     }
-    auto submitted = pool_->Submit([this, client_fd]() { HandleClient(client_fd); });
+    if (inflight_.load() >= max_inflight_) {
+      std::string response =
+          "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+      ::send(client_fd, response.data(), response.size(), 0);
+      ::close(client_fd);
+      continue;
+    }
+    inflight_.fetch_add(1);
+    auto submitted = pool_->Submit([this, client_fd]() {
+      HandleClient(client_fd);
+      inflight_.fetch_sub(1);
+    });
     if (!submitted.ok()) {
+      inflight_.fetch_sub(1);
       ::close(client_fd);
     }
   }
@@ -195,7 +210,7 @@ void HttpServer::HandleClient(int client_fd) {
   req.body = std::move(body);
   if (!parse_ok) {
     resp.status = 400;
-    resp.body = "{\"error\":\"bad request\"}";
+    resp.body = "{\"ok\":false,\"code\":\"INVALID_ARGUMENT\",\"message\":\"bad request\"}";
   } else {
     resp = handler_(req);
   }

@@ -2,10 +2,12 @@
 
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <string>
 #include <thread>
 #include <unordered_map>
-#include <memory>
+
+#include "pomai_search/thread_pool.h"
 
 namespace pomai_search {
 
@@ -29,10 +31,7 @@ class HttpServer {
   HttpServer();
   ~HttpServer();
 
-  HttpServer(const HttpServer&) = delete;
-  HttpServer& operator=(const HttpServer&) = delete;
-
-  bool Start(int port, Handler handler, int worker_threads);
+  bool Start(int port, Handler handler, int worker_threads, size_t max_inflight);
   void Wait();
   void Stop();
 
@@ -40,12 +39,13 @@ class HttpServer {
   void AcceptLoop();
   void HandleClient(int client_fd);
 
-  int server_fd_ = -1;
   std::atomic<bool> running_{false};
+  int server_fd_ = -1;
   std::thread accept_thread_;
   Handler handler_;
-  int worker_threads_ = 0;
-  std::unique_ptr<class ThreadPool> pool_;
+  std::unique_ptr<ThreadPool> pool_;
+  std::atomic<size_t> inflight_{0};
+  size_t max_inflight_ = 0;
 };
 
 }  // namespace pomai_search

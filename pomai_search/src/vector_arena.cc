@@ -1,4 +1,4 @@
-#include "vector_arena.h"
+#include "pomai_search/vector_arena.h"
 
 #include <cstring>
 

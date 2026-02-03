@@ -1,4 +1,4 @@
-#include "simd/kernels.h"
+#include "pomai_search/simd/kernels.h"
 
 #include <immintrin.h>
 

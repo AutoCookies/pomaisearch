@@ -21,18 +21,20 @@ add_library(pomai_search_core
   src/logging.cc
   src/thread_pool.cc
   src/vector_arena.cc
-  src/shard.cc
-  src/search_engine.cc
   src/simd/scalar_kernels.cc
   src/simd/avx2_kernels.cc
   src/simd/cpu_features.cc
+  src/index/flat_index.cc
+  src/index/hnsw_index.cc
+  src/search_engine.cc
+  src/net/http_server.cc
   src/net/json.cc
+  src/observability/metrics.cc
 )
 
 target_include_directories(pomai_search_core
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
 )
 
 target_compile_definitions(pomai_search_core PRIVATE $<$<BOOL:${POMAI_SEARCH_ENABLE_AVX2}>:POMAI_SEARCH_ENABLE_AVX2=1>)
@@ -42,13 +44,11 @@ target_compile_options(pomai_search_core PRIVATE -O3 -Wall -Wextra -Wpedantic -W
 set_source_files_properties(src/simd/avx2_kernels.cc PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma")
 
 add_executable(pomai-searchd
-  src/net/http_server.cc
   src/server/search_server.cc
 )
 
 target_link_libraries(pomai-searchd PRIVATE pomai_search_core)
 
-target_include_directories(pomai-searchd PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(pomai-searchd PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_executable(pomai-search
@@ -57,33 +57,53 @@ add_executable(pomai-search
 
 target_link_libraries(pomai-search PRIVATE pomai_search_core)
 
-target_include_directories(pomai-search PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(pomai-search PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_executable(pomai_search_tests
   tests/test_main.cc
   tests/test_status.cc
-  tests/test_shard.cc
-  tests/test_engine.cc
+  tests/test_thread_pool.cc
+  tests/test_vector_arena.cc
   tests/test_simd.cc
+  tests/test_shard_or_index_flat.cc
+  tests/test_engine_flat.cc
+  tests/test_engine_hnsw.cc
+  tests/test_hybrid.cc
+  tests/test_determinism.cc
   tests/test_concurrency.cc
 )
 
 target_link_libraries(pomai_search_tests PRIVATE pomai_search_core)
 
-target_include_directories(pomai_search_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(pomai_search_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 target_compile_options(pomai_search_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_test(NAME pomai_search_tests COMMAND pomai_search_tests)
 
-add_executable(pomai_search_bench
-  bench/bench_main.cc
+add_executable(pomai_search_bench_flat
+  bench/bench_flat.cc
 )
 
-target_link_libraries(pomai_search_bench PRIVATE pomai_search_core)
+target_link_libraries(pomai_search_bench_flat PRIVATE pomai_search_core)
 
-target_include_directories(pomai_search_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_compile_options(pomai_search_bench PRIVATE -Wall -Wextra -Wpedantic -Werror)
+target_compile_options(pomai_search_bench_flat PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_executable(pomai_search_bench_hnsw
+  bench/bench_hnsw.cc
+)
+
+target_link_libraries(pomai_search_bench_hnsw PRIVATE pomai_search_core)
+
+target_compile_options(pomai_search_bench_hnsw PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_executable(pomai_search_bench_recall
+  bench/bench_recall.cc
+)
+
+target_link_libraries(pomai_search_bench_recall PRIVATE pomai_search_core)
+
+target_compile_options(pomai_search_bench_recall PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 if(POMAI_SEARCH_ENABLE_ASAN)
   target_compile_options(pomai_search_core PRIVATE -fsanitize=address -fno-omit-frame-pointer)

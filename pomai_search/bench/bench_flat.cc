@@ -1,0 +1,146 @@
+#include <algorithm>
+#include <chrono>
+#include <iostream>
+#include <numeric>
+#include <random>
+#include <string>
+#include <vector>
+
+#include "pomai_search/search_engine.h"
+
+namespace pomai_search {
+
+namespace {
+
+struct BenchConfig {
+  int n = 1000;
+  int dim = 32;
+  int queries = 100;
+  int topk = 10;
+  int shards = 1;
+  int threads = 0;
+  SearchEngineConfig::Similarity similarity = SearchEngineConfig::Similarity::Dot;
+  SearchEngine::QueryOptions::Scope scope = SearchEngine::QueryOptions::Scope::Global;
+  bool avx2 = true;
+  uint32_t seed = 42;
+};
+
+BenchConfig ParseArgs(int argc, char** argv) {
+  BenchConfig cfg;
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    auto next = [&]() {
+      if (i + 1 >= argc) {
+        return std::string();
+      }
+      return std::string(argv[++i]);
+    };
+    if (arg == "--n") {
+      cfg.n = std::stoi(next());
+    } else if (arg == "--dim") {
+      cfg.dim = std::stoi(next());
+    } else if (arg == "--queries") {
+      cfg.queries = std::stoi(next());
+    } else if (arg == "--topk") {
+      cfg.topk = std::stoi(next());
+    } else if (arg == "--shards") {
+      cfg.shards = std::stoi(next());
+    } else if (arg == "--threads") {
+      cfg.threads = std::stoi(next());
+    } else if (arg == "--similarity") {
+      std::string value = next();
+      cfg.similarity = value == "cosine" ? SearchEngineConfig::Similarity::Cosine
+                                          : SearchEngineConfig::Similarity::Dot;
+    } else if (arg == "--scope") {
+      std::string value = next();
+      cfg.scope = value == "local" ? SearchEngine::QueryOptions::Scope::Local
+                                    : SearchEngine::QueryOptions::Scope::Global;
+    } else if (arg == "--avx2") {
+      cfg.avx2 = next() == "on";
+    } else if (arg == "--seed") {
+      cfg.seed = static_cast<uint32_t>(std::stoul(next()));
+    }
+  }
+  return cfg;
+}
+
+double Percentile(std::vector<double> values, double p) {
+  if (values.empty()) {
+    return 0.0;
+  }
+  std::sort(values.begin(), values.end());
+  size_t idx = static_cast<size_t>(p * (values.size() - 1));
+  return values[idx];
+}
+
+}  // namespace
+
+}  // namespace pomai_search
+
+int main(int argc, char** argv) {
+  auto cfg = pomai_search::ParseArgs(argc, argv);
+  pomai_search::SearchEngineConfig engine_cfg;
+  engine_cfg.dim = cfg.dim;
+  engine_cfg.num_shards = cfg.shards;
+  engine_cfg.index_type = pomai_search::SearchEngineConfig::IndexType::Flat;
+  engine_cfg.similarity = cfg.similarity;
+  engine_cfg.enable_avx2 = cfg.avx2;
+  engine_cfg.query_threads = cfg.threads;
+  auto engine_or = pomai_search::SearchEngine::Open(engine_cfg);
+  if (!engine_or.ok()) {
+    std::cerr << "Failed to open engine: " << engine_or.status().ToString() << "\n";
+    return 1;
+  }
+  auto engine = std::move(engine_or.value());
+
+  std::mt19937 rng(cfg.seed);
+  std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+  std::vector<std::vector<float>> data(cfg.n, std::vector<float>(cfg.dim));
+  for (int i = 0; i < cfg.n; ++i) {
+    for (int d = 0; d < cfg.dim; ++d) {
+      data[i][d] = dist(rng);
+    }
+  }
+
+  auto ingest_start = std::chrono::steady_clock::now();
+  for (int i = 0; i < cfg.n; ++i) {
+    engine->Upsert("doc" + std::to_string(i), pomai_search::VectorView{data[i].data(), cfg.dim});
+  }
+  auto ingest_end = std::chrono::steady_clock::now();
+  double ingest_s = std::chrono::duration_cast<std::chrono::duration<double>>(ingest_end - ingest_start).count();
+  double ingest_rate = cfg.n / ingest_s;
+
+  std::vector<std::vector<float>> queries(cfg.queries, std::vector<float>(cfg.dim));
+  for (int i = 0; i < cfg.queries; ++i) {
+    for (int d = 0; d < cfg.dim; ++d) {
+      queries[i][d] = dist(rng);
+    }
+  }
+  for (int i = 0; i < std::min(cfg.queries, 10); ++i) {
+    pomai_search::SearchEngine::QueryOptions opts;
+    opts.topk = cfg.topk;
+    opts.scope = cfg.scope;
+    engine->Search(pomai_search::VectorView{queries[i].data(), cfg.dim}, opts);
+  }
+
+  std::vector<double> latencies;
+  latencies.reserve(cfg.queries);
+  for (int i = 0; i < cfg.queries; ++i) {
+    pomai_search::SearchEngine::QueryOptions opts;
+    opts.topk = cfg.topk;
+    opts.scope = cfg.scope;
+    auto start = std::chrono::steady_clock::now();
+    engine->Search(pomai_search::VectorView{queries[i].data(), cfg.dim}, opts);
+    auto end = std::chrono::steady_clock::now();
+    double ms = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(end - start).count();
+    latencies.push_back(ms);
+  }
+  double avg = std::accumulate(latencies.begin(), latencies.end(), 0.0) / latencies.size();
+  double p50 = pomai_search::Percentile(latencies, 0.50);
+  double p95 = pomai_search::Percentile(latencies, 0.95);
+
+  std::cout << "Benchmark flat\n";
+  std::cout << "ingest ops/s: " << ingest_rate << "\n";
+  std::cout << "query avg ms: " << avg << " p50: " << p50 << " p95: " << p95 << "\n";
+  return 0;
+}

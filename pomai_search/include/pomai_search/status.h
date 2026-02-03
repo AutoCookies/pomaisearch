@@ -54,15 +54,26 @@ class StatusOr {
   explicit operator bool() const { return ok(); }
   const Status& status() const { return status_; }
 
-  const T& value() const & { CheckOk(); return *value_; }
-  T& value() & { CheckOk(); return *value_; }
-  T&& value() && { CheckOk(); return std::move(*value_); }
+  const T& value() const & {
+    CheckOk();
+    return *value_;
+  }
+  T& value() & {
+    CheckOk();
+    return *value_;
+  }
+  T&& value() && {
+    CheckOk();
+    return std::move(*value_);
+  }
 
   const T& ValueOrDie() const & { return value(); }
   T& ValueOrDie() & { return value(); }
   T&& ValueOrDie() && { return std::move(*this).value(); }
 
-  T value_or(T default_value) const { return ok() ? *value_ : std::move(default_value); }
+  T value_or(T default_value) const {
+    return ok() ? *value_ : std::move(default_value);
+  }
 
  private:
   void EnsureNotOk() {

@@ -28,6 +28,6 @@ bool GetIntField(const JsonValue& object, const std::string& name, int* out);
 bool GetBoolField(const JsonValue& object, const std::string& name, bool* out);
 bool GetFloatArrayField(const JsonValue& object, const std::string& name, std::vector<float>* out);
 bool GetStringMapField(const JsonValue& object, const std::string& name,
-                        std::unordered_map<std::string, std::string>* out);
+                       std::unordered_map<std::string, std::string>* out);
 
 }  // namespace pomai_search
