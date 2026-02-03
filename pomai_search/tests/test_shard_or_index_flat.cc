@@ -1,5 +1,5 @@
-#include "pomai_search/index/flat_index.h"
-#include "pomai_search/vector_store.h"
+#include "core/index/flat_index.h"
+#include "core/vectorstore/vector_store.h"
 #include "tests/test_framework.h"
 
 #include <cmath>

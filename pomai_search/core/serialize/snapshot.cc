@@ -1,4 +1,4 @@
-#include "pomai_search/snapshot.h"
+#include "core/serialize/snapshot.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -10,7 +10,7 @@
 
 #include "pomai_search/hash.h"
 #include "pomai_search/search_engine.h"
-#include "search_engine_impl.h"
+#include "src/search_engine_impl.h"
 
 namespace pomai_search {
 namespace {

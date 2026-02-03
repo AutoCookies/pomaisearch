@@ -38,6 +38,7 @@ class SearchEngine {
                 std::optional<std::string> text = std::nullopt);
   Status Delete(std::string_view key);
   StatusOr<bool> Exists(std::string_view key) const;
+  StatusOr<std::vector<float>> GetVector(std::string_view key) const;
 
   StatusOr<std::vector<ResultItem>> Search(VectorView q, QueryOptions opt);
   StatusOr<std::vector<ResultItem>> Search(VectorView q) { return Search(q, QueryOptions{}); }

@@ -1,4 +1,4 @@
-#include "pomai_search/simd/kernels.h"
+#include "core/kernels/kernels.h"
 #include "tests/test_framework.h"
 
 namespace pomai_search::test {

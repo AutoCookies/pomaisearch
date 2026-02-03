@@ -13,9 +13,9 @@
 #include <unordered_map>
 #include <vector>
 
-#include "pomai_search/net/json.h"
+#include "app/json.h"
 #include "pomai_search/search_engine.h"
-#include "pomai_search/snapshot.h"
+#include "core/serialize/snapshot.h"
 
 namespace pomai_search {
 

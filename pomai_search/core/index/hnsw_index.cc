@@ -1,14 +1,59 @@
-#include "pomai_search/index/hnsw_index.h"
+#include "core/index/hnsw_index.h"
 
 #include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <mutex>
 #include <queue>
-#include <unordered_set>
+
 
 #include "pomai_search/scoring.h"
+
 namespace pomai_search {
+
+namespace {
+
+// Thread-local visited set optimization to avoid per-search heap allocations.
+// Uses generation counters (tags) so clearing is O(1).
+class VisitedList {
+ public:
+  void Resize(size_t size) {
+    if (size > tags_.size()) {
+      tags_.resize(size, 0);
+    }
+  }
+
+  void Advance() {
+    ++current_tag_;
+    if (current_tag_ == 0) {
+      // Overflow handling: extremely rare, but just reset all tags (O(N))
+      std::fill(tags_.begin(), tags_.end(), 0);
+      current_tag_ = 1;
+    }
+  }
+
+  bool Visited(uint32_t id) const {
+    // Safety check for bounds omitted for speed (caller ensures Resize)
+    return tags_[id] == current_tag_;
+  }
+
+  void Mark(uint32_t id) {
+    tags_[id] = current_tag_;
+  }
+
+ private:
+  std::vector<uint64_t> tags_;
+  uint64_t current_tag_ = 0;
+};
+
+// Thread-local instance
+VisitedList& GetThreadVisitedList() {
+  thread_local VisitedList visited_list;
+  return visited_list;
+}
+
+}  // namespace
+
 
 HnswIndex::HnswIndex(const VectorStore* store, int dim, SearchEngineConfig::Similarity similarity,
                      DotFunc dot_func, size_t max_points, int m, int ef_construction, int ef_search,
@@ -150,7 +195,7 @@ Status HnswIndex::Upsert(uint32_t id, size_t offset, float norm) {
     // Pruning happens inside ConnectNewNode or we select neighbors here?
     // SearchLayer returns EF candidates sorted by distance.
     // We select M from them using Heuristic.
-    std::vector<uint32_t> selected = PruneNeighbors(internal_id, candidates, l == 0 ? m0_ : m_);
+    std::vector<uint32_t> selected = PruneNeighbors(internal_id, candidates, l == 0 ? m0_ : m_, l);
     
     // Add bidirectional connections
     // For specific `internal_id`, set its links to `selected`.
@@ -187,7 +232,7 @@ Status HnswIndex::Upsert(uint32_t id, size_t offset, float norm) {
         bool need_prune = (n_neighbors.size() >= static_cast<size_t>(l == 0 ? m0_ : m_));
         if (need_prune) {
              n_neighbors.push_back(internal_id);
-             std::vector<uint32_t> new_links = PruneNeighbors(n, n_neighbors, l == 0 ? m0_ : m_);
+             std::vector<uint32_t> new_links = PruneNeighbors(n, n_neighbors, l == 0 ? m0_ : m_, l);
              ClearLinks(n, l);
              for(uint32_t link : new_links) AddLink(n, l, link);
         } else {
@@ -241,15 +286,15 @@ std::vector<uint32_t> HnswIndex::SearchLayer(VectorView q, uint32_t entry, int l
   std::vector<uint32_t> top_candidates;
   std::priority_queue<std::pair<float, uint32_t>> candidates; // Score, ID (Max heap)
   std::priority_queue<std::pair<float, uint32_t>, std::vector<std::pair<float, uint32_t>>, std::greater<>> results; // Min heap (best scores)
-  // Visited set
-  // Optimization: use bitset or tag.
-  // For correctness first: unordered_set
-  std::unordered_set<uint32_t> visited;
+  // Visited set optimization
+  VisitedList& visited = GetThreadVisitedList();
+  visited.Resize(offsets_.size()); // Ensure capacity
+  visited.Advance(); // New generation
   
   float entry_score = Score(q, entry);
   candidates.push({entry_score, entry});
   results.push({entry_score, entry});
-  visited.insert(entry);
+  visited.Mark(entry);
 
   while (!candidates.empty()) {
     auto [score, current] = candidates.top();
@@ -281,7 +326,8 @@ std::vector<uint32_t> HnswIndex::SearchLayer(VectorView q, uint32_t entry, int l
     if (!neighbors_ptr) continue;
 
     for (uint32_t neighbor : *neighbors_ptr) {
-      if (visited.insert(neighbor).second) {
+      if (!visited.Visited(neighbor)) {
+          visited.Mark(neighbor);
           float s = Score(q, neighbor);
           if (results.size() < static_cast<size_t>(ef) || s > results.top().first) {
               candidates.push({s, neighbor});
@@ -307,17 +353,43 @@ std::vector<uint32_t> HnswIndex::SearchLayer(VectorView q, uint32_t entry, int l
   return res;
 }
 
-std::vector<uint32_t> HnswIndex::PruneNeighbors(uint32_t node_id, const std::vector<uint32_t>& candidates, int max_links) const {
+std::vector<uint32_t> HnswIndex::PruneNeighbors(uint32_t node_id, const std::vector<uint32_t>& candidates, int max_links, int level) const {
     if (candidates.size() <= static_cast<size_t>(max_links)) return candidates;
     
     // Heuristic pruning: Select diverse neighbors
-    // 1. Sort candidates by score (best/highest first)
+    // 0. Extend candidates: add neighbors of neighbors to pool
+    std::vector<uint32_t> extended_pool;
+    extended_pool.reserve(candidates.size() * 3);
+    
+    VisitedList& visited_ext = GetThreadVisitedList();
+    visited_ext.Resize(offsets_.size());
+    visited_ext.Advance();
+    
+    for (uint32_t c : candidates) {
+        if (!visited_ext.Visited(c)) {
+            visited_ext.Mark(c);
+            extended_pool.push_back(c);
+        }
+        
+        // Extend logic (only if we have neighbors)
+        // Note: GetLinks returns a copy. Optimization: direct access or iterator.
+        // For now, assume correctness.
+        auto neighbors = GetLinks(c, level);
+        for (uint32_t n : neighbors) {
+            if (!visited_ext.Visited(n)) {
+                visited_ext.Mark(n);
+                extended_pool.push_back(n);
+            }
+        }
+    }
+    
+    // 1. Sort extended pool by score (best/highest first)
     const float* target_data = store_->Get(offsets_[node_id]);
     VectorView target_view{target_data, dim_};
     
     std::vector<std::pair<float, uint32_t>> sorted;
-    sorted.reserve(candidates.size());
-    for(uint32_t c : candidates) {
+    sorted.reserve(extended_pool.size());
+    for(uint32_t c : extended_pool) {
         if (c == node_id) continue;
         sorted.push_back({Score(target_view, c), c});
     }

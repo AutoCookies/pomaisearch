@@ -40,11 +40,13 @@ struct SearchEngineConfig {
   int query_threads = 0;
   int ingest_threads = 0;
   size_t memory_alignment = 32;
-  enum class IndexType { Flat, Hnsw } index_type = IndexType::Flat;
+  enum class IndexType { Flat, Hnsw, IvfFlat, IvfSq8 } index_type = IndexType::Flat;
   int hnsw_m = 16;
   int hnsw_ef_construction = 200;
   int hnsw_ef_search = 50;
   uint32_t hnsw_seed = 42;
+  int ivf_nlist = 100;
+  int ivf_nprobe = 10;
   uint64_t global_seed = 0;
   uint32_t contract_version = 1;
 };

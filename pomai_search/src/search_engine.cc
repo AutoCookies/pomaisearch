@@ -11,13 +11,13 @@
 #include <unordered_set>
 
 #include "pomai_search/hash.h"
-#include "pomai_search/index/flat_index.h"
-#include "pomai_search/index/hnsw_index.h"
+#include "core/index/flat_index.h"
+#include "core/index/hnsw_index.h"
 #include "pomai_search/logging.h"
 #include "pomai_search/observability/metrics.h"
 #include "pomai_search/scoring.h"
-#include "pomai_search/snapshot.h"
-#include "pomai_search/simd/kernels.h"
+#include "core/serialize/snapshot.h"
+#include "core/kernels/kernels.h"
 #include "pomai_search/thread_pool.h"
 #include "search_engine_impl.h"
 
@@ -119,6 +119,14 @@ StatusOr<bool> SearchEngine::Exists(std::string_view key) const {
   }
   size_t shard_index = StableHash64(key) % impl_->shards.size();
   return impl_->shards[shard_index]->Exists(key);
+}
+
+StatusOr<std::vector<float>> SearchEngine::GetVector(std::string_view key) const {
+  if (!impl_) {
+    return Status(StatusCode::kInternal, "engine not initialized");
+  }
+  size_t shard_index = StableHash64(key) % impl_->shards.size();
+  return impl_->shards[shard_index]->GetVectorCopy(key);
 }
 
 StatusOr<std::vector<ResultItem>> SearchEngine::Search(VectorView q, QueryOptions opt) {

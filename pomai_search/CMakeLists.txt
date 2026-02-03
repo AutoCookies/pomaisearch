@@ -20,44 +20,45 @@ add_library(pomai_search_core
   src/status.cc
   src/logging.cc
   src/thread_pool.cc
-  src/vector_store.cc
-  src/simd/scalar_kernels.cc
-  src/simd/avx2_kernels.cc
-  src/simd/cpu_features.cc
-  src/index/flat_index.cc
-  src/index/hnsw_index.cc
+  core/vectorstore/vector_store.cc
+  core/kernels/scalar_kernels.cc
+  core/kernels/avx2_kernels.cc
+  core/kernels/cpu_features.cc
+  core/index/flat_index.cc
+  core/index/hnsw_index.cc
+  core/index/ivf_flat_index.cc
+  core/index/ivf_sq8_index.cc
   src/search_engine.cc
-  src/snapshot.cc
-  src/net/http_server.cc
-  src/net/json.cc
+  core/serialize/snapshot.cc
+  app/http_server.cc
+  app/json.cc
   src/observability/metrics.cc
+  core/vectorstore/vector_arena.cc
+  core/clustering/kmeans.cc
+  core/quantization/scalar_quantizer.cc
 )
 
 target_include_directories(pomai_search_core
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
 )
 
 target_compile_definitions(pomai_search_core PRIVATE $<$<BOOL:${POMAI_SEARCH_ENABLE_AVX2}>:POMAI_SEARCH_ENABLE_AVX2=1>)
-
 target_compile_options(pomai_search_core PRIVATE -O3 -Wall -Wextra -Wpedantic -Werror)
 
-set_source_files_properties(src/simd/avx2_kernels.cc PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma")
+set_source_files_properties(core/kernels/avx2_kernels.cc PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma")
 
 add_executable(pomai-searchd
-  src/server/search_server.cc
+  app/search_server.cc
 )
-
 target_link_libraries(pomai-searchd PRIVATE pomai_search_core)
-
 target_compile_options(pomai-searchd PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_executable(pomai-search
-  src/cli/search_cli.cc
+  app/search_cli.cc
 )
-
 target_link_libraries(pomai-search PRIVATE pomai_search_core)
-
 target_compile_options(pomai-search PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_executable(pomai_search_tests
@@ -68,7 +69,10 @@ add_executable(pomai_search_tests
   tests/test_simd.cc
   tests/test_shard_or_index_flat.cc
   tests/test_engine_flat.cc
+  tests/test_engine_flat.cc
   tests/test_engine_hnsw.cc
+  tests/test_engine_ivf.cc
+  tests/test_engine_sq8.cc
   tests/test_hybrid.cc
   tests/test_hash.cc
   tests/test_determinism.cc
@@ -110,6 +114,22 @@ add_executable(pomai_search_bench_recall
 target_link_libraries(pomai_search_bench_recall PRIVATE pomai_search_core)
 
 target_compile_options(pomai_search_bench_recall PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_executable(pomai_search_bench_ivf
+  bench/bench_ivf.cc
+)
+
+target_link_libraries(pomai_search_bench_ivf PRIVATE pomai_search_core)
+
+target_compile_options(pomai_search_bench_ivf PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_executable(pomai_search_bench_sq8
+  bench/bench_sq8.cc
+)
+
+target_link_libraries(pomai_search_bench_sq8 PRIVATE pomai_search_core)
+
+target_compile_options(pomai_search_bench_sq8 PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_executable(pomai_search_bench_quality
   bench/bench_quality.cc

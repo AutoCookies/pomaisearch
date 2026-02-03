@@ -1,4 +1,4 @@
-#include "pomai_search/index/flat_index.h"
+#include "core/index/flat_index.h"
 
 #include <algorithm>
 #include <cmath>

@@ -5,8 +5,8 @@
 #include <string_view>
 #include <vector>
 
-#include "pomai_search/net/http_server.h"
-#include "pomai_search/net/json.h"
+#include "app/http_server.h"
+#include "app/json.h"
 #include "pomai_search/search_engine.h"
 
 namespace pomai_search {

@@ -6,9 +6,9 @@
 #include <unordered_map>
 #include <vector>
 
-#include "pomai_search/index/index.h"
-#include "pomai_search/simd/kernels.h"
-#include "pomai_search/vector_store.h"
+#include "core/index/index.h"
+#include "core/kernels/kernels.h"
+#include "core/vectorstore/vector_store.h"
 
 namespace pomai_search {
 
@@ -33,7 +33,7 @@ class HnswIndex : public Index {
   std::vector<uint32_t> SearchLayer(VectorView q, uint32_t entry, int level, int ef) const;
   void ConnectNewNode(uint32_t node_id, int level, const std::vector<uint32_t>& candidates);
   std::vector<uint32_t> PruneNeighbors(uint32_t node_id, const std::vector<uint32_t>& candidates,
-                                       int max_links) const;
+                                       int max_links, int level) const;
   
   // Helpers for memory layout
   void SetLink(uint32_t node_id, int level, int idx, uint32_t target);

@@ -1,4 +1,4 @@
-#include "pomai_search/vector_arena.h"
+#include "core/vectorstore/vector_arena.h"
 #include "tests/test_framework.h"
 
 #include <cstdint>

@@ -7,10 +7,10 @@
 #include <unordered_set>
 #include <vector>
 
-#include "pomai_search/index/flat_index.h"
-#include "pomai_search/index/hnsw_index.h"
-#include "pomai_search/simd/kernels.h"
-#include "pomai_search/vector_store.h"
+#include "core/index/flat_index.h"
+#include "core/index/hnsw_index.h"
+#include "core/kernels/kernels.h"
+#include "core/vectorstore/vector_store.h"
 
 namespace pomai_search {
 

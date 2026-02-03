@@ -4,9 +4,9 @@
 #include <unordered_map>
 #include <vector>
 
-#include "pomai_search/index/index.h"
-#include "pomai_search/simd/kernels.h"
-#include "pomai_search/vector_store.h"
+#include "core/index/index.h"
+#include "core/kernels/kernels.h"
+#include "core/vectorstore/vector_store.h"
 
 namespace pomai_search {
 

@@ -13,14 +13,17 @@
 #include <unordered_map>
 #include <vector>
 
-#include "pomai_search/index/flat_index.h"
-#include "pomai_search/index/hnsw_index.h"
+#include "core/index/flat_index.h"
+#include "core/index/flat_index.h"
+#include "core/index/hnsw_index.h"
+#include "core/index/ivf_flat_index.h"
+#include "core/index/ivf_sq8_index.h"
 #include "pomai_search/observability/metrics.h"
 #include "pomai_search/scoring.h"
 #include "pomai_search/search_engine.h"
-#include "pomai_search/simd/kernels.h"
+#include "core/kernels/kernels.h"
 #include "pomai_search/thread_pool.h"
-#include "pomai_search/vector_store.h"
+#include "core/vectorstore/vector_store.h"
 
 namespace pomai_search {
 
@@ -174,6 +177,20 @@ class Shard {
       index_ = std::make_unique<HnswIndex>(
           &store_, dim, cfg.similarity, dot_func_, max_points_,
           cfg.hnsw_m, cfg.hnsw_ef_construction, cfg.hnsw_ef_search, seed);
+    } else if (cfg.index_type == SearchEngineConfig::IndexType::IvfFlat) {
+      IvfFlatIndex::Config ivf_cfg;
+      ivf_cfg.nlist = cfg.ivf_nlist;
+      ivf_cfg.nprobe = cfg.ivf_nprobe;
+      ivf_cfg.similarity = cfg.similarity;
+      index_ = std::make_unique<IvfFlatIndex>(&store_, dim, ivf_cfg);
+    } else if (cfg.index_type == SearchEngineConfig::IndexType::IvfSq8) {
+      IvfSq8Index::Config sq_cfg;
+      sq_cfg.nlist = cfg.ivf_nlist;
+      sq_cfg.nprobe = cfg.ivf_nprobe;
+      sq_cfg.similarity = cfg.similarity;
+      // Refine factor default is 3.0, maybe expose in config?
+      // For now hardcoded or use default.
+      index_ = std::make_unique<IvfSq8Index>(&store_, dim, sq_cfg);
     } else {
       index_ = std::make_unique<FlatIndex>(&store_, dim, cfg.similarity, dot_func_,
                                            max_points_);

@@ -1,4 +1,4 @@
-#include "pomai_search/vector_store.h"
+#include "core/vectorstore/vector_store.h"
 
 #include <algorithm>
 

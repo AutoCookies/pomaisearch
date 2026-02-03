@@ -20,7 +20,7 @@ struct BenchConfig {
   int shards = 1;
   int threads = 0;
   SearchEngineConfig::Similarity similarity = SearchEngineConfig::Similarity::Dot;
-  SearchEngine::QueryOptions::Scope scope = SearchEngine::QueryOptions::Scope::Global;
+
   bool avx2 = true;
   uint32_t seed = 42;
 };
@@ -53,8 +53,8 @@ BenchConfig ParseArgs(int argc, char** argv) {
                                           : SearchEngineConfig::Similarity::Dot;
     } else if (arg == "--scope") {
       std::string value = next();
-      cfg.scope = value == "local" ? SearchEngine::QueryOptions::Scope::Local
-                                    : SearchEngine::QueryOptions::Scope::Global;
+      cfg.similarity = value == "cosine" ? SearchEngineConfig::Similarity::Cosine
+                                          : SearchEngineConfig::Similarity::Dot;
     } else if (arg == "--avx2") {
       cfg.avx2 = next() == "on";
     } else if (arg == "--seed") {
@@ -119,7 +119,7 @@ int main(int argc, char** argv) {
   for (int i = 0; i < std::min(cfg.queries, 10); ++i) {
     pomai_search::SearchEngine::QueryOptions opts;
     opts.topk = cfg.topk;
-    opts.scope = cfg.scope;
+    opts.topk = cfg.topk;
     engine->Search(pomai_search::VectorView{queries[i].data(), cfg.dim}, opts);
   }
 
@@ -128,7 +128,7 @@ int main(int argc, char** argv) {
   for (int i = 0; i < cfg.queries; ++i) {
     pomai_search::SearchEngine::QueryOptions opts;
     opts.topk = cfg.topk;
-    opts.scope = cfg.scope;
+    opts.topk = cfg.topk;
     auto start = std::chrono::steady_clock::now();
     engine->Search(pomai_search::VectorView{queries[i].data(), cfg.dim}, opts);
     auto end = std::chrono::steady_clock::now();

@@ -22,9 +22,8 @@ struct BenchConfig {
   SearchEngineConfig::Similarity similarity = SearchEngineConfig::Similarity::Dot;
   bool avx2 = true;
   uint32_t seed = 42;
-  int hnsw_m = 16;
-  int hnsw_ef_construction = 200;
-  int hnsw_ef_search = 50;
+  int ivf_nlist = 100;
+  int ivf_nprobe = 10;
 };
 
 BenchConfig ParseArgs(int argc, char** argv) {
@@ -53,17 +52,14 @@ BenchConfig ParseArgs(int argc, char** argv) {
       std::string value = next();
       cfg.similarity = value == "cosine" ? SearchEngineConfig::Similarity::Cosine
                                           : SearchEngineConfig::Similarity::Dot;
-
     } else if (arg == "--avx2") {
       cfg.avx2 = next() == "on";
     } else if (arg == "--seed") {
       cfg.seed = static_cast<uint32_t>(std::stoul(next()));
-    } else if (arg == "--hnsw_m") {
-      cfg.hnsw_m = std::stoi(next());
-    } else if (arg == "--hnsw_ef_construction") {
-      cfg.hnsw_ef_construction = std::stoi(next());
-    } else if (arg == "--hnsw_ef_search") {
-      cfg.hnsw_ef_search = std::stoi(next());
+    } else if (arg == "--ivf_nlist") {
+      cfg.ivf_nlist = std::stoi(next());
+    } else if (arg == "--ivf_nprobe") {
+      cfg.ivf_nprobe = std::stoi(next());
     }
   }
   return cfg;
@@ -87,13 +83,13 @@ int main(int argc, char** argv) {
   pomai_search::SearchEngineConfig engine_cfg;
   engine_cfg.dim = cfg.dim;
   engine_cfg.num_shards = cfg.shards;
-  engine_cfg.index_type = pomai_search::SearchEngineConfig::IndexType::Hnsw;
+  engine_cfg.index_type = pomai_search::SearchEngineConfig::IndexType::IvfFlat;
   engine_cfg.similarity = cfg.similarity;
   engine_cfg.enable_avx2 = cfg.avx2;
   engine_cfg.query_threads = cfg.threads;
-  engine_cfg.hnsw_m = cfg.hnsw_m;
-  engine_cfg.hnsw_ef_construction = cfg.hnsw_ef_construction;
-  engine_cfg.hnsw_ef_search = cfg.hnsw_ef_search;
+  engine_cfg.ivf_nlist = cfg.ivf_nlist;
+  engine_cfg.ivf_nprobe = cfg.ivf_nprobe;
+
   auto engine_or = pomai_search::SearchEngine::Open(engine_cfg);
   if (!engine_or.ok()) {
     std::cerr << "Failed to open engine: " << engine_or.status().ToString() << "\n";
@@ -124,6 +120,7 @@ int main(int argc, char** argv) {
       queries[i][d] = dist(rng);
     }
   }
+  // Warmup
   for (int i = 0; i < std::min(cfg.queries, 10); ++i) {
     pomai_search::SearchEngine::QueryOptions opts;
     opts.topk = cfg.topk;
@@ -145,7 +142,7 @@ int main(int argc, char** argv) {
   double p50 = pomai_search::Percentile(latencies, 0.50);
   double p95 = pomai_search::Percentile(latencies, 0.95);
 
-  std::cout << "Benchmark hnsw\n";
+  std::cout << "Benchmark ivf\n";
   std::cout << "ingest ops/s: " << ingest_rate << "\n";
   std::cout << "query avg ms: " << avg << " p50: " << p50 << " p95: " << p95 << "\n";
   return 0;
