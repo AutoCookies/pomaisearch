@@ -4,6 +4,7 @@
 #include <cmath>
 #include <mutex>
 
+#include "pomai_search/scoring.h"
 namespace pomai_search {
 
 FlatIndex::FlatIndex(int dim, SearchEngineConfig::Similarity similarity, DotFunc dot_func,
@@ -57,8 +58,10 @@ struct FlatCandidate {
 };
 
 static bool IsBetter(const FlatCandidate& a, const FlatCandidate& b) {
-  if (a.score != b.score) {
-    return a.score > b.score;
+  float score_a = SanitizeScore(a.score);
+  float score_b = SanitizeScore(b.score);
+  if (score_a != score_b) {
+    return score_a > score_b;
   }
   return a.id < b.id;
 }
@@ -93,6 +96,7 @@ StatusOr<std::vector<Candidate>> FlatIndex::Search(VectorView q, int topk, const
         score /= (item.norm * query_norm);
       }
     }
+    score = SanitizeScore(score);
     FlatCandidate cand{score, ids_[i]};
     if (static_cast<int>(heap.size()) < topk) {
       heap.push_back(cand);
@@ -111,8 +115,10 @@ StatusOr<std::vector<Candidate>> FlatIndex::Search(VectorView q, int topk, const
     results.push_back(Candidate{cand.id, cand.score});
   }
   std::sort(results.begin(), results.end(), [](const Candidate& a, const Candidate& b) {
-    if (a.score != b.score) {
-      return a.score > b.score;
+    float score_a = SanitizeScore(a.score);
+    float score_b = SanitizeScore(b.score);
+    if (score_a != score_b) {
+      return score_a > score_b;
     }
     return a.id < b.id;
   });
