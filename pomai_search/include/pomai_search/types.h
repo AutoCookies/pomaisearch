@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -26,6 +27,7 @@ struct ResultItem {
   std::string key;
   float score = 0.0f;
   Metadata meta;
+  uint32_t internal_id = 0;
 };
 
 struct SearchEngineConfig {
@@ -43,6 +45,52 @@ struct SearchEngineConfig {
   int hnsw_ef_construction = 200;
   int hnsw_ef_search = 50;
   uint32_t hnsw_seed = 42;
+  uint64_t global_seed = 0;
+  uint32_t contract_version = 1;
+};
+
+enum class FusionMethod { WeightedSum, Rrf };
+
+struct QueryPolicy {
+  int max_latency_ms = 0;
+  int max_candidates = 0;
+  float recall_bias = 0.5f;
+  FusionMethod fusion_method = FusionMethod::WeightedSum;
+};
+
+struct StageExplain {
+  std::string name;
+  std::string index;
+  int ef_search = 0;
+  int nprobe = 0;
+  int max_candidates = 0;
+  double time_ms = 0.0;
+  int candidates_out = 0;
+};
+
+struct ResultExplain {
+  float vector_score_raw = 0.0f;
+  float vector_score_normed = 0.0f;
+  float keyword_score_raw = 0.0f;
+  float keyword_score_normed = 0.0f;
+  std::string fusion_method;
+  float final_score = 0.0f;
+  int rank_before_fusion = 0;
+  int rank_after_fusion = 0;
+};
+
+struct QueryExplain {
+  uint64_t query_id = 0;
+  uint64_t global_seed = 0;
+  uint32_t contract_version = 0;
+  std::string snapshot_id;
+  std::vector<StageExplain> execution_plan;
+  std::vector<ResultExplain> result_details;
+};
+
+struct SearchResponse {
+  std::vector<ResultItem> results;
+  QueryExplain explain;
 };
 
 inline bool MetadataFilterMatch(const Filter& filter, const Metadata& candidate) {

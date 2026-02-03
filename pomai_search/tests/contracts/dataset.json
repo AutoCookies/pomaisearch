@@ -1,0 +1,35 @@
+{
+  "config": {
+    "dim": 2,
+    "num_shards": 1,
+    "index_type": "flat",
+    "global_seed": 42,
+    "contract_version": 1
+  },
+  "records": [
+    {
+      "key": "doc-a",
+      "vector": [1.0, 0.0],
+      "metadata": { "tag": "alpha" },
+      "text": "alpha"
+    },
+    {
+      "key": "doc-b",
+      "vector": [0.0, 1.0],
+      "metadata": { "tag": "beta" },
+      "text": "beta"
+    },
+    {
+      "key": "doc-c",
+      "vector": [0.5, 0.5],
+      "metadata": { "tag": "alpha" },
+      "text": "alpha beta"
+    },
+    {
+      "key": "doc-d",
+      "vector": [0.2, 0.8],
+      "metadata": { "tag": "alpha" },
+      "text": "gamma alpha"
+    }
+  ]
+}

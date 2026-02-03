@@ -31,7 +31,8 @@ class HttpServer {
   HttpServer();
   ~HttpServer();
 
-  bool Start(int port, Handler handler, int worker_threads, size_t max_inflight);
+  bool Start(int port, Handler handler, int worker_threads, size_t max_inflight,
+             size_t max_body_bytes = 0, int timeout_ms = 0);
   void Wait();
   void Stop();
 
@@ -46,6 +47,8 @@ class HttpServer {
   std::unique_ptr<ThreadPool> pool_;
   std::atomic<size_t> inflight_{0};
   size_t max_inflight_ = 0;
+  size_t max_body_bytes_ = 0;
+  int timeout_ms_ = 0;
 };
 
 }  // namespace pomai_search

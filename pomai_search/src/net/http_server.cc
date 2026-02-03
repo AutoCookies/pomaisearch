@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <charconv>
 #include <cstring>
 #include <sstream>
 #include <strings.h>
@@ -33,6 +34,10 @@ const char* ReasonPhrase(int status) {
       return "Not Found";
     case 429:
       return "Too Many Requests";
+    case 408:
+      return "Request Timeout";
+    case 413:
+      return "Payload Too Large";
     case 500:
       return "Internal Server Error";
     case 503:
@@ -50,7 +55,8 @@ HttpServer::~HttpServer() {
   Stop();
 }
 
-bool HttpServer::Start(int port, Handler handler, int worker_threads, size_t max_inflight) {
+bool HttpServer::Start(int port, Handler handler, int worker_threads, size_t max_inflight,
+                       size_t max_body_bytes, int timeout_ms) {
   if (running_.load()) {
     return false;
   }
@@ -78,6 +84,8 @@ bool HttpServer::Start(int port, Handler handler, int worker_threads, size_t max
   int threads = worker_threads > 0 ? worker_threads : 4;
   pool_ = std::make_unique<ThreadPool>(static_cast<size_t>(threads));
   max_inflight_ = max_inflight > 0 ? max_inflight : static_cast<size_t>(threads) * 4;
+  max_body_bytes_ = max_body_bytes > 0 ? max_body_bytes : 1024 * 1024;
+  timeout_ms_ = timeout_ms;
   running_.store(true);
   accept_thread_ = std::thread([this]() { AcceptLoop(); });
   return true;
@@ -140,6 +148,13 @@ void HttpServer::AcceptLoop() {
 }
 
 void HttpServer::HandleClient(int client_fd) {
+  if (timeout_ms_ > 0) {
+    timeval tv{};
+    tv.tv_sec = timeout_ms_ / 1000;
+    tv.tv_usec = (timeout_ms_ % 1000) * 1000;
+    setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+  }
   std::string request;
   char buffer[4096];
   ssize_t n = 0;
@@ -153,6 +168,18 @@ void HttpServer::HandleClient(int client_fd) {
   HttpResponse resp;
   bool parse_ok = true;
   if (n <= 0) {
+    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      resp.status = 408;
+      resp.body = "{\"ok\":false,\"code\":\"TIMEOUT\",\"message\":\"request timeout\"}";
+      std::ostringstream response_stream;
+      response_stream << "HTTP/1.1 " << resp.status << " " << ReasonPhrase(resp.status) << "\r\n";
+      response_stream << "Content-Type: " << resp.content_type << "\r\n";
+      response_stream << "Content-Length: " << resp.body.size() << "\r\n";
+      response_stream << "Connection: close\r\n\r\n";
+      response_stream << resp.body;
+      std::string response = response_stream.str();
+      ::send(client_fd, response.data(), response.size(), 0);
+    }
     ::close(client_fd);
     return;
   }
@@ -174,6 +201,7 @@ void HttpServer::HandleClient(int client_fd) {
   }
   std::string line;
   size_t content_length = 0;
+  bool length_ok = true;
   while (std::getline(header_stream, line)) {
     if (!line.empty() && line.back() == '\r') {
       line.pop_back();
@@ -188,13 +216,33 @@ void HttpServer::HandleClient(int client_fd) {
     std::string key = Trim(line.substr(0, pos));
     std::string value = Trim(line.substr(pos + 1));
     if (strcasecmp(key.c_str(), "Content-Length") == 0) {
-      try {
-        content_length = static_cast<size_t>(std::stoul(value));
-      } catch (...) {
-        content_length = 0;
+      size_t parsed = 0;
+      auto result = std::from_chars(value.data(), value.data() + value.size(), parsed);
+      if (result.ec != std::errc()) {
+        length_ok = false;
+      } else {
+        content_length = parsed;
       }
     }
     req.headers.emplace(std::move(key), std::move(value));
+  }
+  if (!length_ok || content_length > max_body_bytes_) {
+    resp.status = length_ok ? 413 : 400;
+    if (resp.status == 413) {
+      resp.body = "{\"ok\":false,\"code\":\"PAYLOAD_TOO_LARGE\",\"message\":\"payload too large\"}";
+    } else {
+      resp.body = "{\"ok\":false,\"code\":\"INVALID_ARGUMENT\",\"message\":\"invalid content length\"}";
+    }
+    std::ostringstream response_stream;
+    response_stream << "HTTP/1.1 " << resp.status << " " << ReasonPhrase(resp.status) << "\r\n";
+    response_stream << "Content-Type: " << resp.content_type << "\r\n";
+    response_stream << "Content-Length: " << resp.body.size() << "\r\n";
+    response_stream << "Connection: close\r\n\r\n";
+    response_stream << resp.body;
+    std::string response = response_stream.str();
+    ::send(client_fd, response.data(), response.size(), 0);
+    ::close(client_fd);
+    return;
   }
   std::string body;
   if (header_end != std::string::npos) {
