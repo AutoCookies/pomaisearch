@@ -69,6 +69,7 @@ add_executable(pomai_search_tests
   tests/test_engine_flat.cc
   tests/test_engine_hnsw.cc
   tests/test_hybrid.cc
+  tests/test_hash.cc
   tests/test_determinism.cc
   tests/test_concurrency.cc
 )

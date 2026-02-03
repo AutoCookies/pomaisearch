@@ -10,10 +10,12 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "pomai_search/hash.h"
 #include "pomai_search/index/flat_index.h"
 #include "pomai_search/index/hnsw_index.h"
 #include "pomai_search/logging.h"
 #include "pomai_search/observability/metrics.h"
+#include "pomai_search/scoring.h"
 #include "pomai_search/simd/kernels.h"
 #include "pomai_search/thread_pool.h"
 #include "pomai_search/vector_arena.h"
@@ -114,8 +116,10 @@ class KeywordIndex {
       results.push_back(Candidate{pair.first, pair.second});
     }
     std::sort(results.begin(), results.end(), [](const Candidate& a, const Candidate& b) {
-      if (a.score != b.score) {
-        return a.score > b.score;
+      float score_a = SanitizeScore(a.score);
+      float score_b = SanitizeScore(b.score);
+      if (score_a != score_b) {
+        return score_a > score_b;
       }
       return a.id < b.id;
     });
@@ -240,13 +244,15 @@ class Shard {
       }
       ResultItem item;
       item.key = doc.key;
-      item.score = cand.score;
+      item.score = SanitizeScore(cand.score);
       item.meta = doc.meta;
       results.push_back(std::move(item));
     }
     std::sort(results.begin(), results.end(), [](const ResultItem& a, const ResultItem& b) {
-      if (a.score != b.score) {
-        return a.score > b.score;
+      float score_a = SanitizeScore(a.score);
+      float score_b = SanitizeScore(b.score);
+      if (score_a != score_b) {
+        return score_a > score_b;
       }
       return a.key < b.key;
     });
@@ -292,13 +298,15 @@ class Shard {
       float score = alpha * pair.second.first + (1.0f - alpha) * pair.second.second;
       ResultItem item;
       item.key = doc.key;
-      item.score = score;
+      item.score = SanitizeScore(score);
       item.meta = doc.meta;
       results.push_back(std::move(item));
     }
     std::sort(results.begin(), results.end(), [](const ResultItem& a, const ResultItem& b) {
-      if (a.score != b.score) {
-        return a.score > b.score;
+      float score_a = SanitizeScore(a.score);
+      float score_b = SanitizeScore(b.score);
+      if (score_a != score_b) {
+        return score_a > score_b;
       }
       return a.key < b.key;
     });
@@ -391,7 +399,7 @@ Status SearchEngine::Upsert(std::string_view key, VectorView vec, Metadata meta,
   if (!impl_) {
     return Status(StatusCode::kInternal, "engine not initialized");
   }
-  size_t shard_index = std::hash<std::string_view>{}(key) % impl_->shards.size();
+  size_t shard_index = StableHash64(key) % impl_->shards.size();
   auto expiry = ComputeExpiry(ttl);
   impl_->metrics.IncrementUpserts();
   return impl_->shards[shard_index]->Upsert(key, vec, std::move(meta), expiry, std::move(text));
@@ -401,7 +409,7 @@ Status SearchEngine::Delete(std::string_view key) {
   if (!impl_) {
     return Status(StatusCode::kInternal, "engine not initialized");
   }
-  size_t shard_index = std::hash<std::string_view>{}(key) % impl_->shards.size();
+  size_t shard_index = StableHash64(key) % impl_->shards.size();
   impl_->metrics.IncrementDeletes();
   return impl_->shards[shard_index]->Delete(key);
 }
@@ -410,7 +418,7 @@ StatusOr<bool> SearchEngine::Exists(std::string_view key) const {
   if (!impl_) {
     return Status(StatusCode::kInternal, "engine not initialized");
   }
-  size_t shard_index = std::hash<std::string_view>{}(key) % impl_->shards.size();
+  size_t shard_index = StableHash64(key) % impl_->shards.size();
   return impl_->shards[shard_index]->Exists(key);
 }
 
@@ -467,8 +475,10 @@ StatusOr<std::vector<ResultItem>> SearchEngine::Search(VectorView q, QueryOption
     merged.insert(merged.end(), shard_result.begin(), shard_result.end());
   }
   std::sort(merged.begin(), merged.end(), [](const ResultItem& a, const ResultItem& b) {
-    if (a.score != b.score) {
-      return a.score > b.score;
+    float score_a = SanitizeScore(a.score);
+    float score_b = SanitizeScore(b.score);
+    if (score_a != score_b) {
+      return score_a > score_b;
     }
     return a.key < b.key;
   });
@@ -486,7 +496,7 @@ StatusOr<std::vector<ResultItem>> SearchEngine::SearchByKey(std::string_view key
     return Status(StatusCode::kInternal, "engine not initialized");
   }
   impl_->metrics.IncrementQueries();
-  size_t shard_index = std::hash<std::string_view>{}(key) % impl_->shards.size();
+  size_t shard_index = StableHash64(key) % impl_->shards.size();
   auto vec_or = impl_->shards[shard_index]->GetVectorCopy(key);
   if (!vec_or.ok()) {
     return vec_or.status();
@@ -572,8 +582,10 @@ StatusOr<std::vector<ResultItem>> SearchEngine::SearchHybrid(const HybridQuery& 
       merged.insert(merged.end(), shard_result.begin(), shard_result.end());
     }
     std::sort(merged.begin(), merged.end(), [](const ResultItem& a, const ResultItem& b) {
-      if (a.score != b.score) {
-        return a.score > b.score;
+      float score_a = SanitizeScore(a.score);
+      float score_b = SanitizeScore(b.score);
+      if (score_a != score_b) {
+        return score_a > score_b;
       }
       return a.key < b.key;
     });

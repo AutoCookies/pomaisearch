@@ -6,6 +6,7 @@
 #include <queue>
 #include <unordered_set>
 
+#include "pomai_search/scoring.h"
 namespace pomai_search {
 
 HnswIndex::HnswIndex(int dim, SearchEngineConfig::Similarity similarity, DotFunc dot_func,
@@ -93,8 +94,10 @@ struct ScoredId {
 
 struct BetterScore {
   bool operator()(const ScoredId& a, const ScoredId& b) const {
-    if (a.score != b.score) {
-      return a.score < b.score;
+    float score_a = SanitizeScore(a.score);
+    float score_b = SanitizeScore(b.score);
+    if (score_a != score_b) {
+      return score_a < score_b;
     }
     return a.id > b.id;
   }
@@ -102,8 +105,10 @@ struct BetterScore {
 
 struct WorseScore {
   bool operator()(const ScoredId& a, const ScoredId& b) const {
-    if (a.score != b.score) {
-      return a.score > b.score;
+    float score_a = SanitizeScore(a.score);
+    float score_b = SanitizeScore(b.score);
+    if (score_a != score_b) {
+      return score_a > score_b;
     }
     return a.id < b.id;
   }
@@ -165,8 +170,10 @@ std::vector<uint32_t> HnswIndex::SearchLayer(VectorView q, uint32_t entry, int l
     results.pop();
   }
   std::sort(scored.begin(), scored.end(), [](const ScoredId& a, const ScoredId& b) {
-    if (a.score != b.score) {
-      return a.score > b.score;
+    float score_a = SanitizeScore(a.score);
+    float score_b = SanitizeScore(b.score);
+    if (score_a != score_b) {
+      return score_a > score_b;
     }
     return a.id < b.id;
   });
@@ -199,8 +206,10 @@ void HnswIndex::ConnectNewNode(uint32_t node_id, int level, const std::vector<ui
     scored.push_back({score, candidate});
   }
   std::sort(scored.begin(), scored.end(), [](const ScoredId& a, const ScoredId& b) {
-    if (a.score != b.score) {
-      return a.score > b.score;
+    float score_a = SanitizeScore(a.score);
+    float score_b = SanitizeScore(b.score);
+    if (score_a != score_b) {
+      return score_a > score_b;
     }
     return a.id < b.id;
   });
@@ -268,8 +277,10 @@ StatusOr<std::vector<Candidate>> HnswIndex::Search(VectorView q, int topk, const
     results.push_back(Candidate{id, score});
   }
   std::sort(results.begin(), results.end(), [](const Candidate& a, const Candidate& b) {
-    if (a.score != b.score) {
-      return a.score > b.score;
+    float score_a = SanitizeScore(a.score);
+    float score_b = SanitizeScore(b.score);
+    if (score_a != score_b) {
+      return score_a > score_b;
     }
     return a.id < b.id;
   });
@@ -309,7 +320,7 @@ float HnswIndex::Score(VectorView q, const Node& node) const {
     }
     score /= (node.norm * query_norm);
   }
-  return score;
+  return SanitizeScore(score);
 }
 
 int HnswIndex::RandomLevel() {
