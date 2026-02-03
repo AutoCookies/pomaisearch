@@ -1,4 +1,4 @@
-#include "simd/kernels.h"
+#include "pomai_search/simd/kernels.h"
 
 #include <cstdint>
 
@@ -62,6 +62,17 @@ bool CpuSupportsAvx2() {
   Cpuid(regs, 7, 0);
   const bool avx2 = (regs[1] & (1 << 5)) != 0;
   return avx2;
+}
+
+DotFunc GetDotFunc(bool enable_avx2) {
+#if defined(__AVX2__)
+  if (enable_avx2 && CpuSupportsAvx2()) {
+    return &DotAvx2;
+  }
+#else
+  (void)enable_avx2;
+#endif
+  return &DotScalar;
 }
 
 }  // namespace pomai_search

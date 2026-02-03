@@ -1,39 +1,37 @@
 #include "pomai_search/status.h"
-#include "test_framework.h"
+#include "tests/test_framework.h"
 
-using pomai_search::Status;
-using pomai_search::StatusCode;
-using pomai_search::StatusOr;
+namespace pomai_search::test {
 
-POMAI_TEST(TestStatusBasics) {
-  Status ok;
-  EXPECT_TRUE(ok.ok());
-  Status err(StatusCode::kInvalidArgument, "bad");
-  EXPECT_TRUE(!err.ok());
-  EXPECT_TRUE(err.ToString().find("InvalidArgument") != std::string::npos);
+POMAI_TEST(StatusOrOkPath) {
+  StatusOr<int> ok_value(42);
+  EXPECT_TRUE(ok_value.ok());
+  EXPECT_EQ(ok_value.value(), 42);
+  EXPECT_EQ(ok_value.ValueOrDie(), 42);
+  EXPECT_EQ(ok_value.value_or(7), 42);
   return true;
 }
 
-POMAI_TEST(TestStatusOrError) {
-  Status err(StatusCode::kNotFound, "missing");
-  StatusOr<int> result(err);
-  EXPECT_TRUE(!result.ok());
-  EXPECT_EQ(result.status().code(), StatusCode::kNotFound);
-  EXPECT_EQ(result.value_or(7), 7);
+POMAI_TEST(StatusOrErrorPath) {
+  StatusOr<int> error(Status(StatusCode::kInvalidArgument, "bad"));
+  EXPECT_TRUE(!error.ok());
+  EXPECT_EQ(error.status().code(), StatusCode::kInvalidArgument);
+  EXPECT_EQ(error.status().message(), "bad");
+  EXPECT_EQ(error.value_or(9), 9);
   return true;
 }
 
-POMAI_TEST(TestStatusOrOkValue) {
-  StatusOr<int> result(42);
-  EXPECT_TRUE(result.ok());
-  EXPECT_EQ(result.value(), 42);
-  EXPECT_EQ(result.value_or(7), 42);
+POMAI_TEST(StatusOrRejectsOkStatus) {
+  StatusOr<int> error(Status::Ok());
+  EXPECT_TRUE(!error.ok());
+  EXPECT_EQ(error.status().code(), StatusCode::kInternal);
   return true;
 }
 
-POMAI_TEST(TestStatusOrOkStatusIsError) {
-  StatusOr<int> result(Status::Ok());
-  EXPECT_TRUE(!result.ok());
-  EXPECT_EQ(result.status().code(), StatusCode::kInternal);
+POMAI_TEST(StatusToString) {
+  Status status(StatusCode::kNotFound, "missing");
+  EXPECT_TRUE(status.ToString().find("missing") != std::string::npos);
   return true;
 }
+
+}  // namespace pomai_search::test

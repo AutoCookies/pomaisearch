@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <vector>
 
-#include "aligned_allocator.h"
+#include "pomai_search/aligned_allocator.h"
 
 namespace pomai_search {
 

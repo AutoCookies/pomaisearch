@@ -1,8 +1,8 @@
-#include "net/json.h"
+#include "pomai_search/net/json.h"
 
 #include <cctype>
-#include <sstream>
 #include <cstdlib>
+#include <sstream>
 
 namespace pomai_search {
 
@@ -35,7 +35,8 @@ std::string JsonEscape(std::string_view input) {
       default:
         if (static_cast<unsigned char>(c) < 0x20) {
           std::ostringstream oss;
-          oss << "\\u" << std::hex << std::uppercase << static_cast<int>(static_cast<unsigned char>(c));
+          oss << "\\u" << std::hex << std::uppercase
+              << static_cast<int>(static_cast<unsigned char>(c));
           out += oss.str();
         } else {
           out += c;
@@ -97,7 +98,7 @@ class JsonParser {
   bool ParseObject(JsonValue* out) {
     out->type = JsonValue::Type::kObject;
     out->object.clear();
-    ++pos_;  // '{'
+    ++pos_;
     SkipWhitespace();
     if (pos_ < input_.size() && input_[pos_] == '}') {
       ++pos_;
@@ -133,7 +134,7 @@ class JsonParser {
   bool ParseArray(JsonValue* out) {
     out->type = JsonValue::Type::kArray;
     out->array.clear();
-    ++pos_;  // '['
+    ++pos_;
     SkipWhitespace();
     if (pos_ < input_.size() && input_[pos_] == ']') {
       ++pos_;
@@ -204,9 +205,9 @@ class JsonParser {
           default:
             return Fail("Invalid escape");
         }
-        continue;
+      } else {
+        result += c;
       }
-      result += c;
     }
     return Fail("Unterminated string");
   }
@@ -225,19 +226,10 @@ class JsonParser {
         ++pos_;
       }
     }
-    if (pos_ < input_.size() && (input_[pos_] == 'e' || input_[pos_] == 'E')) {
-      ++pos_;
-      if (pos_ < input_.size() && (input_[pos_] == '+' || input_[pos_] == '-')) {
-        ++pos_;
-      }
-      while (pos_ < input_.size() && std::isdigit(static_cast<unsigned char>(input_[pos_]))) {
-        ++pos_;
-      }
-    }
-    std::string token(input_.substr(start, pos_ - start));
-    char* end_ptr = nullptr;
-    *out = std::strtod(token.c_str(), &end_ptr);
-    if (end_ptr == token.c_str()) {
+    std::string num = std::string(input_.substr(start, pos_ - start));
+    char* end = nullptr;
+    *out = std::strtod(num.c_str(), &end);
+    if (end == num.c_str()) {
       return Fail("Invalid number");
     }
     return true;
@@ -256,16 +248,22 @@ class JsonParser {
       out->boolean = false;
       return true;
     }
-    return Fail("Invalid boolean");
+    return Fail("Invalid bool");
   }
 
   bool ParseNull(JsonValue* out) {
-    if (input_.substr(pos_, 4) == "null") {
-      pos_ += 4;
-      out->type = JsonValue::Type::kNull;
-      return true;
+    if (input_.substr(pos_, 4) != "null") {
+      return Fail("Invalid null");
     }
-    return Fail("Invalid null");
+    pos_ += 4;
+    out->type = JsonValue::Type::kNull;
+    return true;
+  }
+
+  void SkipWhitespace() {
+    while (pos_ < input_.size() && std::isspace(static_cast<unsigned char>(input_[pos_]))) {
+      ++pos_;
+    }
   }
 
   bool Consume(char c) {
@@ -276,13 +274,7 @@ class JsonParser {
     return false;
   }
 
-  void SkipWhitespace() {
-    while (pos_ < input_.size() && std::isspace(static_cast<unsigned char>(input_[pos_]))) {
-      ++pos_;
-    }
-  }
-
-  bool Fail(const char* message) {
+  bool Fail(const std::string& message) {
     if (error_) {
       *error_ = message;
     }
@@ -302,9 +294,6 @@ bool ParseJson(std::string_view input, JsonValue* out, std::string* error) {
 }
 
 const JsonValue* FindField(const JsonValue& object, const std::string& name) {
-  if (object.type != JsonValue::Type::kObject) {
-    return nullptr;
-  }
   auto it = object.object.find(name);
   if (it == object.object.end()) {
     return nullptr;
@@ -313,61 +302,63 @@ const JsonValue* FindField(const JsonValue& object, const std::string& name) {
 }
 
 bool GetStringField(const JsonValue& object, const std::string& name, std::string* out) {
-  const JsonValue* value = FindField(object, name);
-  if (!value || value->type != JsonValue::Type::kString) {
+  const JsonValue* field = FindField(object, name);
+  if (!field || field->type != JsonValue::Type::kString) {
     return false;
   }
-  *out = value->string;
+  *out = field->string;
   return true;
 }
 
 bool GetIntField(const JsonValue& object, const std::string& name, int* out) {
-  const JsonValue* value = FindField(object, name);
-  if (!value || value->type != JsonValue::Type::kNumber) {
+  const JsonValue* field = FindField(object, name);
+  if (!field || field->type != JsonValue::Type::kNumber) {
     return false;
   }
-  *out = static_cast<int>(value->number);
+  *out = static_cast<int>(field->number);
   return true;
 }
 
 bool GetBoolField(const JsonValue& object, const std::string& name, bool* out) {
-  const JsonValue* value = FindField(object, name);
-  if (!value || value->type != JsonValue::Type::kBool) {
+  const JsonValue* field = FindField(object, name);
+  if (!field || field->type != JsonValue::Type::kBool) {
     return false;
   }
-  *out = value->boolean;
+  *out = field->boolean;
   return true;
 }
 
 bool GetFloatArrayField(const JsonValue& object, const std::string& name, std::vector<float>* out) {
-  const JsonValue* value = FindField(object, name);
-  if (!value || value->type != JsonValue::Type::kArray) {
+  const JsonValue* field = FindField(object, name);
+  if (!field || field->type != JsonValue::Type::kArray) {
     return false;
   }
-  out->clear();
-  out->reserve(value->array.size());
-  for (const auto& entry : value->array) {
-    if (entry.type != JsonValue::Type::kNumber) {
+  std::vector<float> values;
+  values.reserve(field->array.size());
+  for (const auto& item : field->array) {
+    if (item.type != JsonValue::Type::kNumber) {
       return false;
     }
-    out->push_back(static_cast<float>(entry.number));
+    values.push_back(static_cast<float>(item.number));
   }
+  *out = std::move(values);
   return true;
 }
 
 bool GetStringMapField(const JsonValue& object, const std::string& name,
-                        std::unordered_map<std::string, std::string>* out) {
-  const JsonValue* value = FindField(object, name);
-  if (!value || value->type != JsonValue::Type::kObject) {
+                       std::unordered_map<std::string, std::string>* out) {
+  const JsonValue* field = FindField(object, name);
+  if (!field || field->type != JsonValue::Type::kObject) {
     return false;
   }
-  out->clear();
-  for (const auto& [key, val] : value->object) {
-    if (val.type != JsonValue::Type::kString) {
+  std::unordered_map<std::string, std::string> map;
+  for (const auto& pair : field->object) {
+    if (pair.second.type != JsonValue::Type::kString) {
       return false;
     }
-    out->emplace(key, val.string);
+    map.emplace(pair.first, pair.second.string);
   }
+  *out = std::move(map);
   return true;
 }
 

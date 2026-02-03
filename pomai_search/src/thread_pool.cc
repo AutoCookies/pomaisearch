@@ -1,4 +1,6 @@
-#include "thread_pool.h"
+#include "pomai_search/thread_pool.h"
+
+#include <utility>
 
 namespace pomai_search {
 
@@ -28,6 +30,11 @@ Status ThreadPool::Shutdown() {
     }
   }
   return Status::Ok();
+}
+
+size_t ThreadPool::QueueSize() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return tasks_.size();
 }
 
 void ThreadPool::WorkerLoop() {

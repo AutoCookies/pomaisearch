@@ -37,11 +37,12 @@ class ThreadPool {
   }
 
   Status Shutdown();
+  size_t QueueSize() const;
 
  private:
   void WorkerLoop();
 
-  std::mutex mutex_;
+  mutable std::mutex mutex_;
   std::condition_variable cv_;
   std::queue<std::function<void()>> tasks_;
   std::vector<std::thread> workers_;

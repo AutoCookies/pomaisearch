@@ -16,6 +16,12 @@ struct VectorView {
   int dim = 0;
 };
 
+struct Filter {
+  std::optional<std::string> tag;
+  std::optional<std::string> source;
+  std::optional<std::string> lang;
+};
+
 struct ResultItem {
   std::string key;
   float score = 0.0f;
@@ -24,7 +30,7 @@ struct ResultItem {
 
 struct SearchEngineConfig {
   int dim = 0;
-  int num_shards = 0;
+  int num_shards = 1;
   enum class Similarity { Dot, Cosine } similarity = Similarity::Dot;
   int topk_default = 10;
   size_t max_points_per_shard = 0;
@@ -32,18 +38,32 @@ struct SearchEngineConfig {
   int query_threads = 0;
   int ingest_threads = 0;
   size_t memory_alignment = 32;
+  enum class IndexType { Flat, Hnsw } index_type = IndexType::Flat;
+  int hnsw_m = 16;
+  int hnsw_ef_construction = 200;
+  int hnsw_ef_search = 50;
+  uint32_t hnsw_seed = 42;
 };
 
-inline bool MetadataFilterMatch(const Metadata& filter, const Metadata& candidate) {
-  if (filter.empty()) {
+inline bool MetadataFilterMatch(const Filter& filter, const Metadata& candidate) {
+  if (!filter.tag && !filter.source && !filter.lang) {
     return true;
   }
-  for (const auto& pair : filter) {
-    if (pair.first != "tag" && pair.first != "source" && pair.first != "lang") {
-      continue;
+  if (filter.tag) {
+    auto it = candidate.find("tag");
+    if (it == candidate.end() || it->second != *filter.tag) {
+      return false;
     }
-    auto it = candidate.find(pair.first);
-    if (it == candidate.end() || it->second != pair.second) {
+  }
+  if (filter.source) {
+    auto it = candidate.find("source");
+    if (it == candidate.end() || it->second != *filter.source) {
+      return false;
+    }
+  }
+  if (filter.lang) {
+    auto it = candidate.find("lang");
+    if (it == candidate.end() || it->second != *filter.lang) {
       return false;
     }
   }
