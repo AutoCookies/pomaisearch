@@ -368,7 +368,7 @@ bool HandleContractRecord(const CliConfig& cfg) {
     }
     SearchEngine::QueryOptions options;
     options.topk = topk;
-    StatusOr<SearchResponse> response_or;
+    StatusOr<SearchResponse> response_or(Status(StatusCode::kInternal, "uninitialized"));
     if (has_text) {
       SearchEngine::HybridQuery query;
       query.text_query = text_query;
@@ -467,7 +467,7 @@ bool HandleContractVerify(const CliConfig& cfg) {
     }
     SearchEngine::QueryOptions options;
     options.topk = topk;
-    StatusOr<SearchResponse> response_or;
+    StatusOr<SearchResponse> response_or(Status(StatusCode::kInternal, "uninitialized"));
     if (has_text) {
       SearchEngine::HybridQuery query;
       query.text_query = text_query;

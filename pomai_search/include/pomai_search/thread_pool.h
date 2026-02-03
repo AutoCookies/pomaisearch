@@ -14,7 +14,7 @@ namespace pomai_search {
 
 class ThreadPool {
  public:
-  explicit ThreadPool(size_t threads);
+  explicit ThreadPool(size_t threads, size_t max_queue_size = 0);
   ~ThreadPool();
 
   ThreadPool(const ThreadPool&) = delete;
@@ -29,6 +29,9 @@ class ThreadPool {
       std::lock_guard<std::mutex> lock(mutex_);
       if (stop_) {
         return Status(StatusCode::kUnavailable, "thread pool stopping");
+      }
+      if (max_queue_size_ > 0 && tasks_.size() >= max_queue_size_) {
+        return Status(StatusCode::kResourceExhausted, "thread pool saturated");
       }
       tasks_.emplace([task]() { (*task)(); });
     }
@@ -47,6 +50,7 @@ class ThreadPool {
   std::queue<std::function<void()>> tasks_;
   std::vector<std::thread> workers_;
   bool stop_ = false;
+  size_t max_queue_size_ = 0;
 };
 
 }  // namespace pomai_search

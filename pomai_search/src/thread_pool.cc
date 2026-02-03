@@ -4,7 +4,8 @@
 
 namespace pomai_search {
 
-ThreadPool::ThreadPool(size_t threads) {
+ThreadPool::ThreadPool(size_t threads, size_t max_queue_size) 
+    : max_queue_size_(max_queue_size) {
   workers_.reserve(threads);
   for (size_t i = 0; i < threads; ++i) {
     workers_.emplace_back([this]() { WorkerLoop(); });

@@ -118,19 +118,19 @@ inline bool MetadataFilterMatch(const Filter& filter, const Metadata& candidate)
   return true;
 }
 
-inline std::optional<std::chrono::steady_clock::time_point> ComputeExpiry(
+inline std::optional<std::chrono::system_clock::time_point> ComputeExpiry(
     const std::optional<std::chrono::milliseconds>& ttl) {
   if (!ttl.has_value()) {
     return std::nullopt;
   }
-  return std::chrono::steady_clock::now() + ttl.value();
+  return std::chrono::system_clock::now() + ttl.value();
 }
 
-inline bool IsExpired(const std::optional<std::chrono::steady_clock::time_point>& expiry) {
+inline bool IsExpired(const std::optional<std::chrono::system_clock::time_point>& expiry) {
   if (!expiry.has_value()) {
     return false;
   }
-  return std::chrono::steady_clock::now() >= expiry.value();
+  return std::chrono::system_clock::now() >= expiry.value();
 }
 
 }  // namespace pomai_search

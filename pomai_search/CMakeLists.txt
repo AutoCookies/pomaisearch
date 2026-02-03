@@ -20,7 +20,7 @@ add_library(pomai_search_core
   src/status.cc
   src/logging.cc
   src/thread_pool.cc
-  src/vector_arena.cc
+  src/vector_store.cc
   src/simd/scalar_kernels.cc
   src/simd/avx2_kernels.cc
   src/simd/cpu_features.cc
@@ -64,7 +64,7 @@ add_executable(pomai_search_tests
   tests/test_main.cc
   tests/test_status.cc
   tests/test_thread_pool.cc
-  tests/test_vector_arena.cc
+  tests/test_vector_store.cc
   tests/test_simd.cc
   tests/test_shard_or_index_flat.cc
   tests/test_engine_flat.cc
@@ -76,6 +76,7 @@ add_executable(pomai_search_tests
   tests/test_contract.cc
   tests/test_snapshot.cc
   tests/test_concurrency.cc
+  tests/test_engine_sharding.cc
 )
 
 target_link_libraries(pomai_search_tests PRIVATE pomai_search_core)

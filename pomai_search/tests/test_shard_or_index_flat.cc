@@ -1,24 +1,31 @@
 #include "pomai_search/index/flat_index.h"
+#include "pomai_search/vector_store.h"
 #include "tests/test_framework.h"
 
+#include <cmath>
 #include <random>
 
 namespace pomai_search::test {
 
 POMAI_TEST(FlatIndexMatchesBruteForce) {
   constexpr int kDim = 4;
-  FlatIndex index(kDim, SearchEngineConfig::Similarity::Dot, &DotScalar, 32, 0, 0);
+  VectorStore store(kDim, 32);
+  FlatIndex index(&store, kDim, SearchEngineConfig::Similarity::Dot, &DotScalar, 0);
   std::mt19937 rng(123);
   std::uniform_real_distribution<float> dist(0.0f, 1.0f);
   std::vector<std::vector<float>> data;
   for (uint32_t i = 0; i < 50; ++i) {
     std::vector<float> vec(kDim);
+    float norm_sq = 0;
     for (int d = 0; d < kDim; ++d) {
       vec[d] = dist(rng);
+      norm_sq += vec[d] * vec[d];
     }
+    float norm = std::sqrt(norm_sq);
     data.push_back(vec);
-    VectorView view{vec.data(), kDim};
-    index.Upsert(i, view);
+    
+    size_t offset = store.Append(vec.data());
+    index.Upsert(i, offset, norm);
   }
   std::vector<float> query(kDim);
   for (int d = 0; d < kDim; ++d) {

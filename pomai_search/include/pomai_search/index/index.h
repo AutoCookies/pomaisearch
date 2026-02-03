@@ -21,7 +21,7 @@ struct IndexStats {
 class Index {
  public:
   virtual ~Index() = default;
-  virtual Status Upsert(uint32_t id, VectorView v) = 0;
+  virtual Status Upsert(uint32_t id, size_t offset, float norm) = 0;
   virtual Status Delete(uint32_t id) = 0;
   virtual StatusOr<std::vector<Candidate>> Search(VectorView q, int topk, const Filter& f) const = 0;
   virtual void Compact() = 0;

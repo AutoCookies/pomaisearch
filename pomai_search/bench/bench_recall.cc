@@ -10,6 +10,7 @@
 #include "pomai_search/index/flat_index.h"
 #include "pomai_search/index/hnsw_index.h"
 #include "pomai_search/simd/kernels.h"
+#include "pomai_search/vector_store.h"
 
 namespace pomai_search {
 
@@ -76,22 +77,26 @@ double Percentile(std::vector<double> values, double p) {
 int main(int argc, char** argv) {
   auto cfg = pomai_search::ParseArgs(argc, argv);
   pomai_search::DotFunc dot_func = pomai_search::GetDotFunc(cfg.avx2);
-  pomai_search::FlatIndex flat(cfg.dim, pomai_search::SearchEngineConfig::Similarity::Dot, dot_func,
-                               32, 0, 0);
-  pomai_search::HnswIndex hnsw(cfg.dim, pomai_search::SearchEngineConfig::Similarity::Dot, dot_func,
-                               32, 0, 0, cfg.hnsw_m, cfg.hnsw_ef_construction, cfg.hnsw_ef_search,
+  pomai_search::VectorStore store(cfg.dim, 32, cfg.n);
+  pomai_search::FlatIndex flat(&store, cfg.dim, pomai_search::SearchEngineConfig::Similarity::Dot, dot_func,
+                               32);
+  pomai_search::HnswIndex hnsw(&store, cfg.dim, pomai_search::SearchEngineConfig::Similarity::Dot, dot_func,
+                               cfg.n, cfg.hnsw_m, cfg.hnsw_ef_construction, cfg.hnsw_ef_search,
                                cfg.seed);
 
   std::mt19937 rng(cfg.seed);
   std::uniform_real_distribution<float> dist(0.0f, 1.0f);
   std::vector<std::vector<float>> data(cfg.n, std::vector<float>(cfg.dim));
   for (int i = 0; i < cfg.n; ++i) {
+    float norm_sq = 0.0f;
     for (int d = 0; d < cfg.dim; ++d) {
       data[i][d] = dist(rng);
+      norm_sq += data[i][d] * data[i][d];
     }
-    pomai_search::VectorView view{data[i].data(), cfg.dim};
-    flat.Upsert(i, view);
-    hnsw.Upsert(i, view);
+    float norm = std::sqrt(norm_sq);
+    size_t offset = store.Append(data[i].data());
+    flat.Upsert(i, offset, norm);
+    hnsw.Upsert(i, offset, norm);
   }
 
   std::vector<std::vector<float>> queries(cfg.queries, std::vector<float>(cfg.dim));

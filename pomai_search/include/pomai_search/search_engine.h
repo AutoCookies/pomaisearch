@@ -16,8 +16,6 @@ class SearchEngine {
  public:
   struct QueryOptions {
     int topk = 0;
-    enum class Scope { Local, Global };
-    Scope scope = Scope::Global;
     Filter filter;
     QueryOptions() = default;
   };

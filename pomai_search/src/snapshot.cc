@@ -10,6 +10,7 @@
 
 #include "pomai_search/hash.h"
 #include "pomai_search/search_engine.h"
+#include "search_engine_impl.h"
 
 namespace pomai_search {
 namespace {
@@ -165,6 +166,18 @@ Status SnapshotWriter::Write(const SearchEngine& engine, std::string_view path) 
       close_out();
       return Status(StatusCode::kInternal, "failed to write snapshot record");
     }
+    int64_t expiry_ms = 0;
+    if (record.expiry) {
+      expiry_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      record.expiry->time_since_epoch())
+                      .count();
+      // Ensure we don't accidentally write 0 for a valid expiry if it happened to be exactly epoch (unlikely but safe)
+      if (expiry_ms == 0) expiry_ms = 1;
+    }
+    if (!WriteValue(out, expiry_ms)) {
+      close_out();
+      return Status(StatusCode::kInternal, "failed to write snapshot record");
+    }
   }
   std::fflush(out);
   int fd = ::fileno(out);
@@ -285,9 +298,21 @@ StatusOr<std::unique_ptr<SearchEngine>> SnapshotReader::Read(std::string_view pa
       }
       record.text = std::move(text);
     }
+    int64_t expiry_ms = 0;
+    if (!ReadValue(in, &expiry_ms)) {
+      // For backward compatibility (if version < X), we might need to handle missing expiry.
+      // But here we are changing format and assuming consistent versioning/upgrade or clean slate.
+      // The task says previous snapshots are incompatible.
+      close_in();
+      return Status(StatusCode::kInvalidArgument, "invalid snapshot record (missing expiry)");
+    }
+    if (expiry_ms != 0) {
+      record.expiry = std::chrono::system_clock::time_point(std::chrono::milliseconds(expiry_ms));
+    }
     VectorView view{record.vector.data(), static_cast<int>(record.vector.size())};
-    Status status = engine->Upsert(record.key, view, std::move(record.meta), std::nullopt,
-                                   record.text);
+    size_t shard_index = StableHash64(record.key) % engine->impl_->shards.size();
+    Status status = engine->impl_->shards[shard_index]->Upsert(
+        record.key, view, std::move(record.meta), record.expiry, record.text);
     if (!status.ok()) {
       close_in();
       return status;

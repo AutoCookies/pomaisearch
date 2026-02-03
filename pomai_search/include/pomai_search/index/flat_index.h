@@ -6,24 +6,23 @@
 
 #include "pomai_search/index/index.h"
 #include "pomai_search/simd/kernels.h"
-#include "pomai_search/vector_arena.h"
+#include "pomai_search/vector_store.h"
 
 namespace pomai_search {
 
 class FlatIndex : public Index {
  public:
-  FlatIndex(int dim, SearchEngineConfig::Similarity similarity, DotFunc dot_func, size_t alignment,
-            size_t reserve_vectors, size_t max_points);
+  FlatIndex(const VectorStore* store, int dim, SearchEngineConfig::Similarity similarity,
+            DotFunc dot_func, size_t max_points);
 
-  Status Upsert(uint32_t id, VectorView v) override;
+  Status Upsert(uint32_t id, size_t offset, float norm) override;
   Status Delete(uint32_t id) override;
   StatusOr<std::vector<Candidate>> Search(VectorView q, int topk, const Filter& f) const override;
   void Compact() override {}
   IndexStats GetStats() const override;
 
  private:
-  float ComputeNorm(const float* data) const;
-
+  const VectorStore* store_;
   int dim_;
   SearchEngineConfig::Similarity similarity_;
   DotFunc dot_func_;
@@ -39,7 +38,6 @@ class FlatIndex : public Index {
   std::unordered_map<uint32_t, size_t> id_to_index_;
   std::vector<uint32_t> ids_;
   std::vector<Item> items_;
-  VectorArena arena_;
 };
 
 }  // namespace pomai_search

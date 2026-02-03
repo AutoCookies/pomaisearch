@@ -16,6 +16,7 @@ struct SnapshotRecord {
   std::vector<float> vector;
   Metadata meta;
   std::optional<std::string> text;
+  std::optional<std::chrono::system_clock::time_point> expiry;
 };
 
 class SearchEngine;
