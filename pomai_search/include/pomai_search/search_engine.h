@@ -51,6 +51,9 @@ class SearchEngine {
   StatusOr<std::vector<ResultItem>> SearchHybrid(const HybridQuery& query) {
     return SearchHybrid(query, QueryOptions{});
   }
+  StatusOr<SearchResponse> SearchWithExplain(VectorView q, QueryOptions opt, QueryPolicy policy);
+  StatusOr<SearchResponse> SearchHybridWithExplain(const HybridQuery& query, QueryOptions opt,
+                                                   QueryPolicy policy);
 
   Stats GetStats() const;
   std::string MetricsJson() const;
@@ -61,6 +64,9 @@ class SearchEngine {
  private:
   SearchEngine();
   Status Initialize(const SearchEngineConfig& cfg);
+
+  friend class SnapshotWriter;
+  friend class SnapshotReader;
 
   struct Impl;
   std::unique_ptr<Impl> impl_;

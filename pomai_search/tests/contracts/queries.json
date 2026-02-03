@@ -1,0 +1,25 @@
+{
+  "queries": [
+    {
+      "vector": [1.0, 0.0],
+      "topk": 3,
+      "policy": {
+        "max_latency_ms": 50,
+        "max_candidates": 6,
+        "recall_bias": 0.4
+      }
+    },
+    {
+      "vector": [1.0, 0.0],
+      "text_query": "alpha",
+      "topk": 3,
+      "alpha": 0.5,
+      "policy": {
+        "max_latency_ms": 50,
+        "max_candidates": 6,
+        "recall_bias": 0.4,
+        "fusion_method": "weighted_sum"
+      }
+    }
+  ]
+}

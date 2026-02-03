@@ -1,0 +1,18 @@
+{
+  "queries": [
+    {
+      "results": [
+        { "key": "doc-a", "score": 1.0 },
+        { "key": "doc-c", "score": 0.5 },
+        { "key": "doc-d", "score": 0.2 }
+      ]
+    },
+    {
+      "results": [
+        { "key": "doc-a", "score": 0.9236489301936017 },
+        { "key": "doc-c", "score": 0.6736489301936017 },
+        { "key": "doc-d", "score": 0.5236489301936017 }
+      ]
+    }
+  ]
+}

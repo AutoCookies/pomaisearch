@@ -27,6 +27,7 @@ add_library(pomai_search_core
   src/index/flat_index.cc
   src/index/hnsw_index.cc
   src/search_engine.cc
+  src/snapshot.cc
   src/net/http_server.cc
   src/net/json.cc
   src/observability/metrics.cc
@@ -71,6 +72,9 @@ add_executable(pomai_search_tests
   tests/test_hybrid.cc
   tests/test_hash.cc
   tests/test_determinism.cc
+  tests/test_explain.cc
+  tests/test_contract.cc
+  tests/test_snapshot.cc
   tests/test_concurrency.cc
 )
 
@@ -105,6 +109,22 @@ add_executable(pomai_search_bench_recall
 target_link_libraries(pomai_search_bench_recall PRIVATE pomai_search_core)
 
 target_compile_options(pomai_search_bench_recall PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_executable(pomai_search_bench_quality
+  bench/bench_quality.cc
+)
+
+target_link_libraries(pomai_search_bench_quality PRIVATE pomai_search_core)
+
+target_compile_options(pomai_search_bench_quality PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_executable(pomai_search_bench_simd
+  bench/bench_simd.cc
+)
+
+target_link_libraries(pomai_search_bench_simd PRIVATE pomai_search_core)
+
+target_compile_options(pomai_search_bench_simd PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 if(POMAI_SEARCH_ENABLE_ASAN)
   target_compile_options(pomai_search_core PRIVATE -fsanitize=address -fno-omit-frame-pointer)

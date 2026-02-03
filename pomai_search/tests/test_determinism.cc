@@ -11,6 +11,7 @@ POMAI_TEST(DeterministicAcrossRuns) {
   cfg.num_shards = 4;
   cfg.query_threads = 2;
   cfg.index_type = SearchEngineConfig::IndexType::Flat;
+  cfg.global_seed = 1337;
   auto engine_or = SearchEngine::Open(cfg);
   EXPECT_TRUE(engine_or.ok());
   auto engine = std::move(engine_or.value());
@@ -46,6 +47,7 @@ POMAI_TEST(NoRegressionSnapshot) {
   SearchEngineConfig cfg;
   cfg.dim = 2;
   cfg.num_shards = 1;
+  cfg.global_seed = 42;
   auto engine_or = SearchEngine::Open(cfg);
   EXPECT_TRUE(engine_or.ok());
   auto engine = std::move(engine_or.value());
@@ -63,6 +65,40 @@ POMAI_TEST(NoRegressionSnapshot) {
     snapshot += item.key + ",";
   }
   EXPECT_EQ(snapshot, "doc-a,doc-c,doc-b,");
+  return true;
+}
+
+POMAI_TEST(DeterministicSeededRanking) {
+  SearchEngineConfig cfg;
+  cfg.dim = 4;
+  cfg.num_shards = 1;
+  cfg.index_type = SearchEngineConfig::IndexType::Hnsw;
+  cfg.global_seed = 99;
+  auto engine_or = SearchEngine::Open(cfg);
+  EXPECT_TRUE(engine_or.ok());
+  auto engine = std::move(engine_or.value());
+  float a[4] = {0.1f, 0.2f, 0.3f, 0.4f};
+  float b[4] = {0.4f, 0.3f, 0.2f, 0.1f};
+  float c[4] = {0.2f, 0.2f, 0.2f, 0.2f};
+  engine->Upsert("doc-a", VectorView{a, 4});
+  engine->Upsert("doc-b", VectorView{b, 4});
+  engine->Upsert("doc-c", VectorView{c, 4});
+  float q[4] = {0.1f, 0.2f, 0.3f, 0.4f};
+  auto first = engine->Search(VectorView{q, 4});
+  EXPECT_TRUE(first.ok());
+  std::string snapshot;
+  for (const auto& item : first.value()) {
+    snapshot += item.key + ",";
+  }
+  for (int i = 0; i < 1000; ++i) {
+    auto result = engine->Search(VectorView{q, 4});
+    EXPECT_TRUE(result.ok());
+    std::string current;
+    for (const auto& item : result.value()) {
+      current += item.key + ",";
+    }
+    EXPECT_EQ(snapshot, current);
+  }
   return true;
 }
 
