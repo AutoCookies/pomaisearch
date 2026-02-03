@@ -66,6 +66,7 @@ void ScalarQuantizer::ComputeDistancesL2(const float* query, const uint8_t* code
     }
 }
 
+
 void ScalarQuantizer::ComputeDotProducts(const float* query, const uint8_t* codes, int n, float* out_scores) const {
     // Optimization opportunity: Precompute query_quantized? No, min/step are dimension specific.
     // Optimization: Unroll loops.
@@ -78,6 +79,46 @@ void ScalarQuantizer::ComputeDotProducts(const float* query, const uint8_t* code
         }
         out_scores[i] = dot;
     }
+}
+
+Status ScalarQuantizer::Save(std::FILE* out) const {
+    if(!fwrite(&dim_, sizeof(dim_), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    
+    // min_
+    uint64_t sz = min_.size();
+    if(!fwrite(&sz, sizeof(sz), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    if(sz > 0 && fwrite(min_.data(), sizeof(float), sz, out) != sz) return Status(StatusCode::kInternal, "write failed");
+    
+    // diff_
+    sz = diff_.size();
+    if(!fwrite(&sz, sizeof(sz), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    if(sz > 0 && fwrite(diff_.data(), sizeof(float), sz, out) != sz) return Status(StatusCode::kInternal, "write failed");
+    
+    // step_
+    sz = step_.size();
+    if(!fwrite(&sz, sizeof(sz), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    if(sz > 0 && fwrite(step_.data(), sizeof(float), sz, out) != sz) return Status(StatusCode::kInternal, "write failed");
+    
+    return Status::Ok();
+}
+
+Status ScalarQuantizer::Load(std::FILE* in) {
+    if(!fread(&dim_, sizeof(dim_), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    
+    uint64_t sz = 0;
+    if(!fread(&sz, sizeof(sz), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    min_.resize(sz);
+    if(sz > 0 && fread(min_.data(), sizeof(float), sz, in) != sz) return Status(StatusCode::kInternal, "read failed");
+    
+    if(!fread(&sz, sizeof(sz), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    diff_.resize(sz);
+    if(sz > 0 && fread(diff_.data(), sizeof(float), sz, in) != sz) return Status(StatusCode::kInternal, "read failed");
+    
+    if(!fread(&sz, sizeof(sz), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    step_.resize(sz);
+    if(sz > 0 && fread(step_.data(), sizeof(float), sz, in) != sz) return Status(StatusCode::kInternal, "read failed");
+    
+    return Status::Ok();
 }
 
 }  // namespace pomai_search

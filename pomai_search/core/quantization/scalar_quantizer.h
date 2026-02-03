@@ -2,8 +2,10 @@
 
 #include <vector>
 #include <cstdint>
+#include <cstdio>
 #include "core/vectorstore/vector_store.h"
 #include "core/kernels/kernels.h"
+#include "pomai_search/status.h"
 
 namespace pomai_search {
 
@@ -32,6 +34,9 @@ class ScalarQuantizer {
 
   // Compute Dot Product distances (Higher is better)
   void ComputeDotProducts(const float* query, const uint8_t* codes, int n, float* out_scores) const;
+  
+  Status Save(std::FILE* out) const;
+  Status Load(std::FILE* in);
 
   size_t code_size() const { return dim_; }
 

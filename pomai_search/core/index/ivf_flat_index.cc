@@ -190,4 +190,91 @@ IndexStats IvfFlatIndex::GetStats() const {
     return stats;
 }
 
+Status IvfFlatIndex::Save(std::FILE* out) const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    // Config validation?
+    if(!fwrite(&config_.nlist, sizeof(config_.nlist), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    
+    // State
+    if(!fwrite(&trained_, sizeof(trained_), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    
+    // Buffer
+    uint64_t buf_sz = buffer_ids_.size();
+    if(!fwrite(&buf_sz, sizeof(buf_sz), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    if(buf_sz > 0 && fwrite(buffer_ids_.data(), sizeof(uint32_t), buf_sz, out) != buf_sz) return Status(StatusCode::kInternal, "write failed");
+    
+    // Map
+    uint64_t map_sz = id_to_offset_.size();
+    if(!fwrite(&map_sz, sizeof(map_sz), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    for(const auto& pair : id_to_offset_) {
+        // pair.first is uint32_t, pair.second is size_t
+        if(!fwrite(&pair.first, sizeof(pair.first), 1, out)) return Status(StatusCode::kInternal, "write failed");
+        if(!fwrite(&pair.second, sizeof(pair.second), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    }
+    
+    if (trained_) {
+        // KMeans
+        Status s = kmeans_.Save(out);
+        if (!s.ok()) return s;
+        
+        // Lists
+        uint64_t num_lists = lists_.size();
+        if(!fwrite(&num_lists, sizeof(num_lists), 1, out)) return Status(StatusCode::kInternal, "write failed");
+        for(const auto& lst : lists_) {
+            uint64_t lsz = lst.size();
+            if(!fwrite(&lsz, sizeof(lsz), 1, out)) return Status(StatusCode::kInternal, "write failed");
+            if(lsz > 0 && fwrite(lst.data(), sizeof(uint32_t), lsz, out) != lsz) return Status(StatusCode::kInternal, "write failed");
+        }
+    }
+    
+    return Status::Ok();
+}
+
+Status IvfFlatIndex::Load(std::FILE* in) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    
+    int nlist = 0;
+    if(!fread(&nlist, sizeof(nlist), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    if(nlist != config_.nlist) return Status(StatusCode::kInternal, "nlist mismatch");
+    
+    if(!fread(&trained_, sizeof(trained_), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    
+    // Buffer
+    uint64_t buf_sz = 0;
+    if(!fread(&buf_sz, sizeof(buf_sz), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    buffer_ids_.resize(buf_sz);
+    if(buf_sz > 0 && fread(buffer_ids_.data(), sizeof(uint32_t), buf_sz, in) != buf_sz) return Status(StatusCode::kInternal, "read failed");
+    
+    // Map
+    uint64_t map_sz = 0;
+    if(!fread(&map_sz, sizeof(map_sz), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    id_to_offset_.clear();
+    id_to_offset_.reserve(map_sz);
+    for(size_t i=0; i<map_sz; ++i) {
+        uint32_t k;
+        size_t v;
+        if(!fread(&k, sizeof(k), 1, in)) return Status(StatusCode::kInternal, "read failed");
+        if(!fread(&v, sizeof(v), 1, in)) return Status(StatusCode::kInternal, "read failed");
+        id_to_offset_[k] = v;
+    }
+    
+    if (trained_) {
+        Status s = kmeans_.Load(in);
+        if (!s.ok()) return s;
+        
+        uint64_t num_lists = 0;
+        if(!fread(&num_lists, sizeof(num_lists), 1, in)) return Status(StatusCode::kInternal, "read failed");
+        lists_.resize(num_lists);
+        for(size_t i=0; i<num_lists; ++i) {
+            uint64_t lsz = 0;
+            if(!fread(&lsz, sizeof(lsz), 1, in)) return Status(StatusCode::kInternal, "read failed");
+            lists_[i].resize(lsz);
+            if(lsz > 0 && fread(lists_[i].data(), sizeof(uint32_t), lsz, in) != lsz) return Status(StatusCode::kInternal, "read failed");
+        }
+    }
+    
+    return Status::Ok();
+}
+
 }  // namespace pomai_search

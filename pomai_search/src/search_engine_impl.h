@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -14,7 +15,6 @@
 #include <vector>
 
 #include "core/index/flat_index.h"
-#include "core/index/flat_index.h"
 #include "core/index/hnsw_index.h"
 #include "core/index/ivf_flat_index.h"
 #include "core/index/ivf_sq8_index.h"
@@ -24,6 +24,9 @@
 #include "core/kernels/kernels.h"
 #include "pomai_search/thread_pool.h"
 #include "core/vectorstore/vector_store.h"
+#include "core/serialize/snapshot.h"
+#include "pomai_search/types.h"
+#include "pomai_search/hash.h"
 
 namespace pomai_search {
 
@@ -123,6 +126,11 @@ class KeywordIndex {
     return results;
   }
 
+
+  
+  Status Save(std::FILE* out) const;
+  Status Load(std::FILE* in);
+
  private:
   void DeleteInternal(uint32_t id) {
     auto it = doc_tokens_.find(id);
@@ -165,34 +173,34 @@ struct ShardDoc {
 class Shard {
  public:
   Shard(int dim, size_t alignment, size_t reserve_vectors,
-        const SearchEngineConfig& cfg)
+        const pomai_search::SearchEngineConfig& cfg)
       : dim_(dim),
         store_(dim, alignment, reserve_vectors),
         similarity_(cfg.similarity),
-        dot_func_(GetDotFunc(cfg.enable_avx2)),
+        dot_func_(pomai_search::GetDotFunc(cfg.enable_avx2)),
         max_points_(cfg.max_points_per_shard) {
-    if (cfg.index_type == SearchEngineConfig::IndexType::Hnsw) {
+    if (cfg.index_type == pomai_search::SearchEngineConfig::IndexType::Hnsw) {
       uint32_t seed =
-          static_cast<uint32_t>(cfg.global_seed ^ StableHash64("hnsw_seed"));
-      index_ = std::make_unique<HnswIndex>(
+          static_cast<uint32_t>(cfg.global_seed ^ pomai_search::StableHash64("hnsw_seed"));
+      index_ = std::make_unique<pomai_search::HnswIndex>(
           &store_, dim, cfg.similarity, dot_func_, max_points_,
           cfg.hnsw_m, cfg.hnsw_ef_construction, cfg.hnsw_ef_search, seed);
-    } else if (cfg.index_type == SearchEngineConfig::IndexType::IvfFlat) {
-      IvfFlatIndex::Config ivf_cfg;
+    } else if (cfg.index_type == pomai_search::SearchEngineConfig::IndexType::IvfFlat) {
+      pomai_search::IvfFlatIndex::Config ivf_cfg;
       ivf_cfg.nlist = cfg.ivf_nlist;
       ivf_cfg.nprobe = cfg.ivf_nprobe;
       ivf_cfg.similarity = cfg.similarity;
-      index_ = std::make_unique<IvfFlatIndex>(&store_, dim, ivf_cfg);
-    } else if (cfg.index_type == SearchEngineConfig::IndexType::IvfSq8) {
-      IvfSq8Index::Config sq_cfg;
+      index_ = std::make_unique<pomai_search::IvfFlatIndex>(&store_, dim, ivf_cfg);
+    } else if (cfg.index_type == pomai_search::SearchEngineConfig::IndexType::IvfSq8) {
+      pomai_search::IvfSq8Index::Config sq_cfg;
       sq_cfg.nlist = cfg.ivf_nlist;
       sq_cfg.nprobe = cfg.ivf_nprobe;
       sq_cfg.similarity = cfg.similarity;
       // Refine factor default is 3.0, maybe expose in config?
       // For now hardcoded or use default.
-      index_ = std::make_unique<IvfSq8Index>(&store_, dim, sq_cfg);
+      index_ = std::make_unique<pomai_search::IvfSq8Index>(&store_, dim, sq_cfg);
     } else {
-      index_ = std::make_unique<FlatIndex>(&store_, dim, cfg.similarity, dot_func_,
+      index_ = std::make_unique<pomai_search::FlatIndex>(&store_, dim, cfg.similarity, dot_func_,
                                            max_points_);
     }
   }
@@ -330,7 +338,7 @@ class Shard {
   struct CandidateResult {
     uint32_t id = 0;
     std::string key;
-    Metadata meta;
+    pomai_search::Metadata meta;
     float score = 0.0f;
   };
 
@@ -480,13 +488,13 @@ class Shard {
     return StatusOr<std::vector<ResultItem>>(std::move(results));
   }
 
-  void ExportRecords(std::vector<SnapshotRecord>* out) const {
+  void ExportRecords(std::vector<pomai_search::SnapshotRecord>* out) const {
     std::shared_lock<std::shared_mutex> lock(mutex_);
     for (size_t i = 0; i < docs_.size(); ++i) {
       const auto& doc = docs_[i];
       if (doc.deleted) continue;
-      if (IsExpired(doc.expiry)) continue;
-      SnapshotRecord record;
+      if (pomai_search::IsExpired(doc.expiry)) continue;
+      pomai_search::SnapshotRecord record;
       record.key = doc.key;
       record.meta = doc.meta;
       record.expiry = doc.expiry;
@@ -516,6 +524,9 @@ class Shard {
   }
 
   IndexStats GetStats() const { return index_->GetStats(); }
+
+  Status Save(std::FILE* out) const;
+  Status Load(std::FILE* in);
 
  private:
   int dim_;

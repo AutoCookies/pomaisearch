@@ -1,9 +1,11 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdio>
 #include <vector>
 
 #include "pomai_search/aligned_allocator.h"
+#include "pomai_search/status.h"
 
 namespace pomai_search {
 
@@ -35,6 +37,9 @@ class VectorStore {
   size_t alignment() const { return data_.get_allocator().alignment(); }
   size_t count() const { return count_; }
   int dim() const { return dim_; }
+  
+  Status Save(std::FILE* out) const;
+  Status Load(std::FILE* in);
 
  private:
   int dim_;

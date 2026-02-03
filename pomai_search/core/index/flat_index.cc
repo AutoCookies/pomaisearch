@@ -141,4 +141,65 @@ IndexStats FlatIndex::GetStats() const {
   return stats;
 }
 
+Status FlatIndex::Save(std::FILE* out) const {
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  
+  if(!fwrite(&max_points_, sizeof(max_points_), 1, out)) 
+    return Status(StatusCode::kInternal, "write failed");
+  
+  uint64_t ids_size = ids_.size();
+  if(!fwrite(&ids_size, sizeof(ids_size), 1, out)) 
+    return Status(StatusCode::kInternal, "write failed");
+  if(ids_size > 0 && fwrite(ids_.data(), sizeof(uint32_t), ids_size, out) != ids_size) 
+    return Status(StatusCode::kInternal, "write failed");
+  
+  uint64_t items_size = items_.size();
+  if(!fwrite(&items_size, sizeof(items_size), 1, out)) 
+    return Status(StatusCode::kInternal, "write failed");
+  for(const auto& item : items_) {
+    if(!fwrite(&item.offset, sizeof(item.offset), 1, out)) 
+      return Status(StatusCode::kInternal, "write failed");
+    if(!fwrite(&item.norm, sizeof(item.norm), 1, out)) 
+      return Status(StatusCode::kInternal, "write failed");
+    if(!fwrite(&item.deleted, sizeof(item.deleted), 1, out)) 
+      return Status(StatusCode::kInternal, "write failed");
+  }
+  
+  return Status::Ok();
+}
+
+Status FlatIndex::Load(std::FILE* in) {
+  std::unique_lock<std::shared_mutex> lock(mutex_);
+  
+  if(!fread(&max_points_, sizeof(max_points_), 1, in)) 
+    return Status(StatusCode::kInternal, "read failed");
+  
+  uint64_t ids_size = 0;
+  if(!fread(&ids_size, sizeof(ids_size), 1, in)) 
+    return Status(StatusCode::kInternal, "read failed");
+  ids_.resize(ids_size);
+  if(ids_size > 0 && fread(ids_.data(), sizeof(uint32_t), ids_size, in) != ids_size) 
+    return Status(StatusCode::kInternal, "read failed");
+  
+  uint64_t items_size = 0;
+  if(!fread(&items_size, sizeof(items_size), 1, in)) 
+    return Status(StatusCode::kInternal, "read failed");
+  items_.resize(items_size);
+  for(auto& item : items_) {
+    if(!fread(&item.offset, sizeof(item.offset), 1, in)) 
+      return Status(StatusCode::kInternal, "read failed");
+    if(!fread(&item.norm, sizeof(item.norm), 1, in)) 
+      return Status(StatusCode::kInternal, "read failed");
+    if(!fread(&item.deleted, sizeof(item.deleted), 1, in)) 
+      return Status(StatusCode::kInternal, "read failed");
+  }
+  
+  id_to_index_.clear();
+  for(size_t i = 0; i < ids_.size(); ++i) {
+    id_to_index_[ids_[i]] = i;
+  }
+  
+  return Status::Ok();
+}
+
 }  // namespace pomai_search

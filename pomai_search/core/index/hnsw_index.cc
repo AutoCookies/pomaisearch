@@ -502,5 +502,155 @@ IndexStats HnswIndex::GetStats() const {
     return stats;
 }
 
+Status HnswIndex::Save(std::FILE* out) const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    uint32_t version = 1;
+    if(!fwrite(&version, sizeof(version), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    
+    // Params
+    if(!fwrite(&m_, sizeof(m_), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    if(!fwrite(&m0_, sizeof(m0_), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    if(!fwrite(&ef_construction_, sizeof(ef_construction_), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    
+    // Global State
+    if(!fwrite(&entry_id_, sizeof(entry_id_), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    if(!fwrite(&max_level_, sizeof(max_level_), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    
+    // Vectors
+    auto write_vec = [&](const auto& vec) {
+        uint64_t sz = vec.size();
+        if(!fwrite(&sz, sizeof(sz), 1, out)) return false;
+        if(sz > 0 && fwrite(vec.data(), sizeof(vec[0]), sz, out) != sz) return false;
+        return true;
+    };
+    
+    if(!write_vec(internal_to_external_)) return Status(StatusCode::kInternal, "write failed");
+    if(!write_vec(offsets_)) return Status(StatusCode::kInternal, "write failed");
+    if(!write_vec(norms_)) return Status(StatusCode::kInternal, "write failed");
+    if(!write_vec(levels_)) return Status(StatusCode::kInternal, "write failed");
+    if(!write_vec(level0_links_)) return Status(StatusCode::kInternal, "write failed");
+    
+    // Deleted (vector<bool>) is special
+    {
+        uint64_t sz = deleted_.size();
+        if(!fwrite(&sz, sizeof(sz), 1, out)) return Status(StatusCode::kInternal, "write failed");
+        std::vector<uint8_t> del_bytes(sz);
+        for(size_t i=0; i<sz; ++i) del_bytes[i] = deleted_[i] ? 1 : 0;
+        if(sz > 0 && fwrite(del_bytes.data(), 1, sz, out) != sz) return Status(StatusCode::kInternal, "write failed");
+    }
+    
+    // Map id_to_offset_idx_
+    {
+        uint64_t sz = id_to_offset_idx_.size();
+        if(!fwrite(&sz, sizeof(sz), 1, out)) return Status(StatusCode::kInternal, "write failed");
+        for(const auto& pair : id_to_offset_idx_) {
+            if(!fwrite(&pair.first, sizeof(pair.first), 1, out)) return Status(StatusCode::kInternal, "write failed");
+            if(!fwrite(&pair.second, sizeof(pair.second), 1, out)) return Status(StatusCode::kInternal, "write failed");
+        }
+    }
+    
+    // Upper Links (Sparse)
+    {
+        uint64_t sz = upper_links_.size();
+        if(!fwrite(&sz, sizeof(sz), 1, out)) return Status(StatusCode::kInternal, "write failed");
+        for(const auto& pair : upper_links_) {
+            uint32_t id = pair.first;
+            const auto& links = pair.second;
+            if(!fwrite(&id, sizeof(id), 1, out)) return Status(StatusCode::kInternal, "write failed");
+            
+            uint32_t num_layers = static_cast<uint32_t>(links.layers.size());
+            if(!fwrite(&num_layers, sizeof(num_layers), 1, out)) return Status(StatusCode::kInternal, "write failed");
+            
+            for(const auto& layer : links.layers) {
+                if(!write_vec(layer)) return Status(StatusCode::kInternal, "write failed");
+            }
+        }
+    }
+    
+    return Status::Ok();
+}
+
+Status HnswIndex::Load(std::FILE* in) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    
+    uint32_t version = 0;
+    if(!fread(&version, sizeof(version), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    if(version != 1) return Status(StatusCode::kInternal, "unsupported version");
+    
+    int m=0, m0=0, ef=0;
+    if(!fread(&m, sizeof(m), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    if(!fread(&m0, sizeof(m0), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    if(!fread(&ef, sizeof(ef), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    m_ = m;
+    m0_ = m0;
+    // ef_construction_ is usually config-based, but we loaded what was built.
+    
+    if(!fread(&entry_id_, sizeof(entry_id_), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    if(!fread(&max_level_, sizeof(max_level_), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    
+    auto read_vec = [&](auto& vec) {
+        using T = typename std::decay_t<decltype(vec)>::value_type;
+        uint64_t sz = 0;
+        if(!fread(&sz, sizeof(sz), 1, in)) return false;
+        vec.resize(sz);
+        if(sz > 0 && fread(vec.data(), sizeof(T), sz, in) != sz) return false;
+        return true;
+    };
+    
+    if(!read_vec(internal_to_external_)) return Status(StatusCode::kInternal, "read failed");
+    if(!read_vec(offsets_)) return Status(StatusCode::kInternal, "read failed");
+    if(!read_vec(norms_)) return Status(StatusCode::kInternal, "read failed");
+    if(!read_vec(levels_)) return Status(StatusCode::kInternal, "read failed");
+    if(!read_vec(level0_links_)) return Status(StatusCode::kInternal, "read failed");
+    
+    // Deleted
+    {
+        uint64_t sz = 0;
+        if(!fread(&sz, sizeof(sz), 1, in)) return Status(StatusCode::kInternal, "read failed");
+        std::vector<uint8_t> del_bytes(sz);
+        if(sz > 0 && fread(del_bytes.data(), 1, sz, in) != sz) return Status(StatusCode::kInternal, "read failed");
+        deleted_.resize(sz);
+        for(size_t i=0; i<sz; ++i) deleted_[i] = (del_bytes[i] != 0);
+    }
+    
+    // Map
+    {
+        uint64_t sz = 0;
+        if(!fread(&sz, sizeof(sz), 1, in)) return Status(StatusCode::kInternal, "read failed");
+        id_to_offset_idx_.clear();
+        id_to_offset_idx_.reserve(sz);
+        for(size_t i=0; i<sz; ++i) {
+            uint32_t k, v;
+            if(!fread(&k, sizeof(k), 1, in)) return Status(StatusCode::kInternal, "read failed");
+            if(!fread(&v, sizeof(v), 1, in)) return Status(StatusCode::kInternal, "read failed");
+            id_to_offset_idx_[k] = v;
+        }
+    }
+    
+    // Upper Links
+    {
+        uint64_t sz = 0;
+        if(!fread(&sz, sizeof(sz), 1, in)) return Status(StatusCode::kInternal, "read failed");
+        upper_links_.clear();
+        upper_links_.reserve(sz);
+        for(size_t i=0; i<sz; ++i) {
+            uint32_t id;
+            if(!fread(&id, sizeof(id), 1, in)) return Status(StatusCode::kInternal, "read failed");
+            
+            uint32_t num_layers = 0;
+            if(!fread(&num_layers, sizeof(num_layers), 1, in)) return Status(StatusCode::kInternal, "read failed");
+            
+            auto& links = upper_links_[id];
+            links.layers.resize(num_layers);
+            for(uint32_t l=0; l<num_layers; ++l) {
+                if(!read_vec(links.layers[l])) return Status(StatusCode::kInternal, "read failed");
+            }
+        }
+    }
+    
+    return Status::Ok();
+}
+
 } // namespace pomai_search
 

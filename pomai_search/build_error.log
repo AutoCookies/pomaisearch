@@ -1,0 +1,226 @@
+In file included from tests/repro_impl.cc:3:
+./src/search_engine_impl.h:129:5: error: expected unqualified-id before ‘return’
+  129 |     return results;
+      |     ^~~~~~
+./src/search_engine_impl.h: In member function ‘void pomai_search::KeywordIndex::Upsert(uint32_t, const std::optional<std::__cxx11::basic_string<char> >&)’:
+./src/search_engine_impl.h:57:46: error: ‘mutex_’ was not declared in this scope
+   57 |     std::unique_lock<std::shared_mutex> lock(mutex_);
+      |                                              ^~~~~~
+./src/search_engine_impl.h:58:5: error: ‘DeleteInternal’ was not declared in this scope
+   58 |     DeleteInternal(id);
+      |     ^~~~~~~~~~~~~~
+./src/search_engine_impl.h:70:5: error: ‘doc_tokens_’ was not declared in this scope
+   70 |     doc_tokens_[id] = term_freq;
+      |     ^~~~~~~~~~~
+./src/search_engine_impl.h:71:7: error: ‘doc_count_’ was not declared in this scope
+   71 |     ++doc_count_;
+      |       ^~~~~~~~~~
+./src/search_engine_impl.h:73:23: error: ‘postings_’ was not declared in this scope; did you mean ‘posting’?
+   73 |       auto& posting = postings_[pair.first];
+      |                       ^~~~~~~~~
+      |                       posting
+./src/search_engine_impl.h:77:7: error: ‘doc_freq_’ was not declared in this scope
+   77 |       doc_freq_[pair.first] = static_cast<int>(postings_[pair.first].size());
+      |       ^~~~~~~~~
+./src/search_engine_impl.h:77:48: error: ‘postings_’ was not declared in this scope
+   77 |       doc_freq_[pair.first] = static_cast<int>(postings_[pair.first].size());
+      |                                                ^~~~~~~~~
+./src/search_engine_impl.h: In member function ‘void pomai_search::KeywordIndex::Delete(uint32_t)’:
+./src/search_engine_impl.h:82:46: error: ‘mutex_’ was not declared in this scope
+   82 |     std::unique_lock<std::shared_mutex> lock(mutex_);
+      |                                              ^~~~~~
+./src/search_engine_impl.h:83:5: error: ‘DeleteInternal’ was not declared in this scope
+   83 |     DeleteInternal(id);
+      |     ^~~~~~~~~~~~~~
+./src/search_engine_impl.h: In member function ‘std::vector<pomai_search::Candidate> pomai_search::KeywordIndex::Search(std::string_view, int) const’:
+./src/search_engine_impl.h:87:46: error: ‘mutex_’ was not declared in this scope
+   87 |     std::shared_lock<std::shared_mutex> lock(mutex_);
+      |                                              ^~~~~~
+./src/search_engine_impl.h:89:27: error: ‘doc_count_’ was not declared in this scope
+   89 |     if (tokens.empty() || doc_count_ == 0) {
+      |                           ^~~~~~~~~~
+./src/search_engine_impl.h:94:25: error: ‘postings_’ was not declared in this scope; did you mean ‘posting_it’?
+   94 |       auto posting_it = postings_.find(token);
+      |                         ^~~~~~~~~
+      |                         posting_it
+./src/search_engine_impl.h:99:20: error: ‘doc_freq_’ was not declared in this scope
+   99 |       auto df_it = doc_freq_.find(token);
+      |                    ^~~~~~~~~
+./src/search_engine_impl.h:104:46: error: ‘doc_count_’ was not declared in this scope
+  104 |           std::log(1.0f + static_cast<float>(doc_count_) / static_cast<float>(df));
+      |                                              ^~~~~~~~~~
+./src/search_engine_impl.h: At global scope:
+./src/search_engine_impl.h:132:10: error: expected initializer before ‘Save’
+  132 |   Status Save(std::FILE* out) const;
+      |          ^~~~
+./src/search_engine_impl.h:135:2: error: expected unqualified-id before ‘private’
+  135 |  private:
+      |  ^~~~~~~
+./src/search_engine_impl.h:162:3: error: non-member ‘mutex_’ cannot be declared ‘mutable’
+  162 |   mutable std::shared_mutex mutex_;
+      |   ^~~~~~~
+./src/search_engine_impl.h:167:3: error: ‘Metadata’ does not name a type
+  167 |   Metadata meta;
+      |   ^~~~~~~~
+./src/search_engine_impl.h:209:3: error: ‘Status’ does not name a type
+  209 |   Status Upsert(std::string_view key, VectorView vec, Metadata meta,
+      |   ^~~~~~
+./src/search_engine_impl.h:268:3: error: ‘Status’ does not name a type
+  268 |   Status Delete(std::string_view key) {
+      |   ^~~~~~
+./src/search_engine_impl.h:280:3: error: ‘StatusOr’ does not name a type
+  280 |   StatusOr<bool> Exists(std::string_view key) const {
+      |   ^~~~~~~~
+./src/search_engine_impl.h:292:24: error: ‘ResultItem’ was not declared in this scope; did you mean ‘pomai_search::ResultItem’?
+  292 |   StatusOr<std::vector<ResultItem>> Search(VectorView query, int topk,
+      |                        ^~~~~~~~~~
+      |                        pomai_search::ResultItem
+In file included from tests/repro_impl.cc:1:
+include/pomai_search/types.h:26:8: note: ‘pomai_search::ResultItem’ declared here
+   26 | struct ResultItem {
+      |        ^~~~~~~~~~
+./src/search_engine_impl.h:292:24: error: template argument 1 is invalid
+  292 |   StatusOr<std::vector<ResultItem>> Search(VectorView query, int topk,
+      |                        ^~~~~~~~~~
+./src/search_engine_impl.h:292:24: error: template argument 2 is invalid
+./src/search_engine_impl.h:292:3: error: ‘StatusOr’ does not name a type
+  292 |   StatusOr<std::vector<ResultItem>> Search(VectorView query, int topk,
+      |   ^~~~~~~~
+./src/search_engine_impl.h:346:3: error: ‘StatusOr’ does not name a type
+  346 |   StatusOr<std::vector<CandidateResult>> SearchCandidates(
+      |   ^~~~~~~~
+./src/search_engine_impl.h:388:15: error: ‘Candidate’ was not declared in this scope; did you mean ‘pomai_search::Candidate’?
+  388 |   std::vector<Candidate> KeywordCandidates(std::string_view text, int topk) const {
+      |               ^~~~~~~~~
+      |               pomai_search::Candidate
+In file included from ./core/index/flat_index.h:7,
+                 from ./src/search_engine_impl.h:17:
+./core/index/index.h:12:8: note: ‘pomai_search::Candidate’ declared here
+   12 | struct Candidate {
+      |        ^~~~~~~~~
+./src/search_engine_impl.h:388:24: error: template argument 1 is invalid
+  388 |   std::vector<Candidate> KeywordCandidates(std::string_view text, int topk) const {
+      |                        ^
+./src/search_engine_impl.h:388:24: error: template argument 2 is invalid
+./src/search_engine_impl.h:388:8: error: ‘<expression error>’ in namespace ‘std’ does not name a type
+  388 |   std::vector<Candidate> KeywordCandidates(std::string_view text, int topk) const {
+      |        ^~~~~~~~~~~~~~~~~
+./src/search_engine_impl.h:392:3: error: ‘StatusOr’ does not name a type
+  392 |   StatusOr<std::vector<CandidateResult>> KeywordCandidatesWithDocs(std::string_view text, int topk,
+      |   ^~~~~~~~
+./src/search_engine_impl.h:430:24: error: ‘ResultItem’ was not declared in this scope; did you mean ‘pomai_search::ResultItem’?
+  430 |   StatusOr<std::vector<ResultItem>> SearchHybrid(std::string_view text,
+      |                        ^~~~~~~~~~
+      |                        pomai_search::ResultItem
+include/pomai_search/types.h:26:8: note: ‘pomai_search::ResultItem’ declared here
+   26 | struct ResultItem {
+      |        ^~~~~~~~~~
+./src/search_engine_impl.h:430:24: error: template argument 1 is invalid
+  430 |   StatusOr<std::vector<ResultItem>> SearchHybrid(std::string_view text,
+      |                        ^~~~~~~~~~
+./src/search_engine_impl.h:430:24: error: template argument 2 is invalid
+./src/search_engine_impl.h:430:3: error: ‘StatusOr’ does not name a type
+  430 |   StatusOr<std::vector<ResultItem>> SearchHybrid(std::string_view text,
+      |   ^~~~~~~~
+./src/search_engine_impl.h:511:3: error: ‘StatusOr’ does not name a type
+  511 |   StatusOr<std::vector<float>> GetVectorCopy(std::string_view key) const {
+      |   ^~~~~~~~
+./src/search_engine_impl.h:527:3: error: ‘IndexStats’ does not name a type
+  527 |   IndexStats GetStats() const { return index_->GetStats(); }
+      |   ^~~~~~~~~~
+./src/search_engine_impl.h:529:3: error: ‘Status’ does not name a type
+  529 |   Status Save(std::FILE* out) const;
+      |   ^~~~~~
+./src/search_engine_impl.h:530:3: error: ‘Status’ does not name a type
+  530 |   Status Load(std::FILE* in);
+      |   ^~~~~~
+./src/search_engine_impl.h:537:3: error: ‘VectorStore’ does not name a type
+  537 |   VectorStore store_;
+      |   ^~~~~~~~~~~
+./src/search_engine_impl.h:538:3: error: ‘SearchEngineConfig’ does not name a type
+  538 |   SearchEngineConfig::Similarity similarity_;
+      |   ^~~~~~~~~~~~~~~~~~
+./src/search_engine_impl.h:539:3: error: ‘DotFunc’ does not name a type
+  539 |   DotFunc dot_func_;
+      |   ^~~~~~~
+./src/search_engine_impl.h:541:19: error: ‘Index’ was not declared in this scope; did you mean ‘pomai_search::Index’?
+  541 |   std::unique_ptr<Index> index_;
+      |                   ^~~~~
+      |                   pomai_search::Index
+./core/index/index.h:22:7: note: ‘pomai_search::Index’ declared here
+   22 | class Index {
+      |       ^~~~~
+./src/search_engine_impl.h:541:24: error: template argument 1 is invalid
+  541 |   std::unique_ptr<Index> index_;
+      |                        ^
+./src/search_engine_impl.h:541:24: error: template argument 2 is invalid
+./src/search_engine_impl.h:541:8: error: ‘<expression error>’ in namespace ‘std’ does not name a type
+  541 |   std::unique_ptr<Index> index_;
+      |        ^~~~~~~~~~~~~~~~~
+./src/search_engine_impl.h:542:3: error: ‘KeywordIndex’ does not name a type
+  542 |   KeywordIndex keyword_index_;
+      |   ^~~~~~~~~~~~
+./src/search_engine_impl.h: In constructor ‘Shard::Shard(int, size_t, size_t, const pomai_search::SearchEngineConfig&)’:
+./src/search_engine_impl.h:179:9: error: class ‘Shard’ does not have any field named ‘store_’
+  179 |         store_(dim, alignment, reserve_vectors),
+      |         ^~~~~~
+./src/search_engine_impl.h:180:9: error: class ‘Shard’ does not have any field named ‘similarity_’
+  180 |         similarity_(cfg.similarity),
+      |         ^~~~~~~~~~~
+./src/search_engine_impl.h:181:9: error: class ‘Shard’ does not have any field named ‘dot_func_’
+  181 |         dot_func_(pomai_search::GetDotFunc(cfg.enable_avx2)),
+      |         ^~~~~~~~~
+./src/search_engine_impl.h:186:7: error: ‘index_’ was not declared in this scope
+  186 |       index_ = std::make_unique<pomai_search::HnswIndex>(
+      |       ^~~~~~
+./src/search_engine_impl.h:187:12: error: ‘store_’ was not declared in this scope
+  187 |           &store_, dim, cfg.similarity, dot_func_, max_points_,
+      |            ^~~~~~
+./src/search_engine_impl.h:187:41: error: ‘dot_func_’ was not declared in this scope
+  187 |           &store_, dim, cfg.similarity, dot_func_, max_points_,
+      |                                         ^~~~~~~~~
+./src/search_engine_impl.h:194:7: error: ‘index_’ was not declared in this scope
+  194 |       index_ = std::make_unique<pomai_search::IvfFlatIndex>(&store_, dim, ivf_cfg);
+      |       ^~~~~~
+./src/search_engine_impl.h:194:62: error: ‘store_’ was not declared in this scope
+  194 |       index_ = std::make_unique<pomai_search::IvfFlatIndex>(&store_, dim, ivf_cfg);
+      |                                                              ^~~~~~
+./src/search_engine_impl.h:202:7: error: ‘index_’ was not declared in this scope
+  202 |       index_ = std::make_unique<pomai_search::IvfSq8Index>(&store_, dim, sq_cfg);
+      |       ^~~~~~
+./src/search_engine_impl.h:202:61: error: ‘store_’ was not declared in this scope
+  202 |       index_ = std::make_unique<pomai_search::IvfSq8Index>(&store_, dim, sq_cfg);
+      |                                                             ^~~~~~
+./src/search_engine_impl.h:204:7: error: ‘index_’ was not declared in this scope
+  204 |       index_ = std::make_unique<pomai_search::FlatIndex>(&store_, dim, cfg.similarity, dot_func_,
+      |       ^~~~~~
+./src/search_engine_impl.h:204:59: error: ‘store_’ was not declared in this scope
+  204 |       index_ = std::make_unique<pomai_search::FlatIndex>(&store_, dim, cfg.similarity, dot_func_,
+      |                                                           ^~~~~~
+./src/search_engine_impl.h:204:88: error: ‘dot_func_’ was not declared in this scope
+  204 |       index_ = std::make_unique<pomai_search::FlatIndex>(&store_, dim, cfg.similarity, dot_func_,
+      |                                                                                        ^~~~~~~~~
+./src/search_engine_impl.h: In member function ‘void Shard::ExportRecords(std::vector<pomai_search::SnapshotRecord>*) const’:
+./src/search_engine_impl.h:500:25: error: ‘const struct ShardDoc’ has no member named ‘meta’
+  500 |       record.meta = doc.meta;
+      |                         ^~~~
+./src/search_engine_impl.h:505:27: error: ‘store_’ was not declared in this scope
+  505 |       const float* data = store_.Get(doc.offset);
+      |                           ^~~~~~
+./src/search_engine_impl.h: At global scope:
+./src/search_engine_impl.h:545:8: error: ‘SearchEngine’ has not been declared
+  545 | struct SearchEngine::Impl {
+      |        ^~~~~~~~~~~~
+./src/search_engine_impl.h:545:27: error: expected unqualified-id before ‘{’ token
+  545 | struct SearchEngine::Impl {
+      |                           ^
+./src/search_engine_impl.h:553:1: error: expected declaration before ‘}’ token
+  553 | }  // namespace pomai_search
+      | ^
+tests/repro_impl.cc: In function ‘int main()’:
+tests/repro_impl.cc:7:19: error: ‘pomai_search::Shard’ has not been declared
+    7 |     pomai_search::Shard::CandidateResult r;
+      |                   ^~~~~
+tests/repro_impl.cc:8:5: error: ‘r’ was not declared in this scope
+    8 |     r.meta["foo"] = "bar";
+      |     ^

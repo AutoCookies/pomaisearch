@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdio>
 #include <cstdint>
 #include <vector>
 
@@ -26,6 +27,8 @@ class Index {
   virtual StatusOr<std::vector<Candidate>> Search(VectorView q, int topk, const Filter& f) const = 0;
   virtual void Compact() = 0;
   virtual IndexStats GetStats() const = 0;
+  virtual Status Save(std::FILE* out) const = 0;
+  virtual Status Load(std::FILE* in) = 0;
 };
 
 }  // namespace pomai_search

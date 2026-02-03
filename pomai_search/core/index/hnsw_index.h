@@ -23,6 +23,8 @@ class HnswIndex : public Index {
   StatusOr<std::vector<Candidate>> Search(VectorView q, int topk, const Filter& f) const override;
   void Compact() override {}
   IndexStats GetStats() const override;
+  Status Save(std::FILE* out) const override;
+  Status Load(std::FILE* in) override;
 
  private:
   float ComputeNorm(const float* data) const;

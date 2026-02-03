@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <random>
+#include <cstdio>
 #include "core/kernels/kernels.h"
 #include "core/vectorstore/vector_store.h"
 #include "pomai_search/status.h"
@@ -35,6 +36,9 @@ class KMeans {
   int AssignOne(const float* vector) const;
 
   const std::vector<float>& centroids() const { return centroids_; }
+  
+  Status Save(std::FILE* out) const;
+  Status Load(std::FILE* in);
 
  private:
   Config config_;

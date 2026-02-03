@@ -44,6 +44,9 @@ uint64_t HashQuery(uint64_t seed, std::string_view text, VectorView view, int to
   return hash;
 }
 
+
+
+
 std::string ComputeSnapshotId(const SearchEngineConfig& cfg, const SearchEngine::Stats& stats) {
   uint64_t hash = StableHash64Combine(StableHash64("snapshot"), std::to_string(cfg.contract_version));
   hash = StableHash64Combine(hash, std::to_string(cfg.global_seed));
@@ -768,6 +771,265 @@ Status SearchEngine::Close() {
   impl_->query_pool.reset();
   impl_->ingest_pool.reset();
   impl_.reset();
+  return Status::Ok();
+}
+
+// Helper functions for string serialization
+static Status WriteString(std::FILE* out, const std::string& str) {
+  uint64_t len = str.size();
+  if(!fwrite(&len, sizeof(len), 1, out)) return Status(StatusCode::kInternal, "write failed");
+  if(len > 0 && fwrite(str.data(), 1, len, out) != len) return Status(StatusCode::kInternal, "write failed");
+  return Status::Ok();
+}
+
+static Status ReadString(std::FILE* in, std::string& str) {
+  uint64_t len = 0;
+  if(!fread(&len, sizeof(len), 1, in)) return Status(StatusCode::kInternal, "read failed");
+  str.resize(len);
+  if(len > 0 && fread(&str[0], 1, len, in) != len) return Status(StatusCode::kInternal, "read failed");
+  return Status::Ok();
+}
+
+Status KeywordIndex::Save(std::FILE* out) const {
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  
+  if(!fwrite(&doc_count_, sizeof(doc_count_), 1, out)) return Status(StatusCode::kInternal, "write failed");
+  
+  // doc_tokens_
+  uint64_t dt_size = doc_tokens_.size();
+  if(!fwrite(&dt_size, sizeof(dt_size), 1, out)) return Status(StatusCode::kInternal, "write failed");
+  for(const auto& [id, tokens] : doc_tokens_) {
+    if(!fwrite(&id, sizeof(id), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    uint64_t t_size = tokens.size();
+    if(!fwrite(&t_size, sizeof(t_size), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    for(const auto& [token, count] : tokens) {
+      Status s = WriteString(out, token);
+      if(!s.ok()) return s;
+      if(!fwrite(&count, sizeof(count), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    }
+  }
+  
+  // postings_
+  uint64_t p_size = postings_.size();
+  if(!fwrite(&p_size, sizeof(p_size), 1, out)) return Status(StatusCode::kInternal, "write failed");
+  for(const auto& [term, posting] : postings_) {
+    Status s = WriteString(out, term);
+    if(!s.ok()) return s;
+    uint64_t post_size = posting.size();
+    if(!fwrite(&post_size, sizeof(post_size), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    for(const auto& [id, count] : posting) {
+      if(!fwrite(&id, sizeof(id), 1, out)) return Status(StatusCode::kInternal, "write failed");
+      if(!fwrite(&count, sizeof(count), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    }
+  }
+  
+  // doc_freq_
+  uint64_t df_size = doc_freq_.size();
+  if(!fwrite(&df_size, sizeof(df_size), 1, out)) return Status(StatusCode::kInternal, "write failed");
+  for(const auto& [term, freq] : doc_freq_) {
+    Status s = WriteString(out, term);
+    if(!s.ok()) return s;
+    if(!fwrite(&freq, sizeof(freq), 1, out)) return Status(StatusCode::kInternal, "write failed");
+  }
+  
+  return Status::Ok();
+}
+
+Status KeywordIndex::Load(std::FILE* in) {
+  std::unique_lock<std::shared_mutex> lock(mutex_);
+  
+  if(!fread(&doc_count_, sizeof(doc_count_), 1, in)) return Status(StatusCode::kInternal, "read failed");
+  
+  // doc_tokens_
+  uint64_t dt_size = 0;
+  if(!fread(&dt_size, sizeof(dt_size), 1, in)) return Status(StatusCode::kInternal, "read failed");
+  doc_tokens_.clear();
+  for(uint64_t i = 0; i < dt_size; ++i) {
+    uint32_t id;
+    if(!fread(&id, sizeof(id), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    uint64_t t_size = 0;
+    if(!fread(&t_size, sizeof(t_size), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    std::unordered_map<std::string, int> tokens;
+    for(uint64_t j = 0; j < t_size; ++j) {
+      std::string token;
+      Status s = ReadString(in, token);
+      if(!s.ok()) return s;
+      int count;
+      if(!fread(&count, sizeof(count), 1, in)) return Status(StatusCode::kInternal, "read failed");
+      tokens[token] = count;
+    }
+    doc_tokens_[id] = std::move(tokens);
+  }
+  
+  // postings_
+  uint64_t p_size = 0;
+  if(!fread(&p_size, sizeof(p_size), 1, in)) return Status(StatusCode::kInternal, "read failed");
+  postings_.clear();
+  for(uint64_t i = 0; i < p_size; ++i) {
+    std::string term;
+    Status s = ReadString(in, term);
+    if(!s.ok()) return s;
+    uint64_t post_size = 0;
+    if(!fread(&post_size, sizeof(post_size), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    std::unordered_map<uint32_t, int> posting;
+    for(uint64_t j = 0; j < post_size; ++j) {
+      uint32_t id;
+      int count;
+      if(!fread(&id, sizeof(id), 1, in)) return Status(StatusCode::kInternal, "read failed");
+      if(!fread(&count, sizeof(count), 1, in)) return Status(StatusCode::kInternal, "read failed");
+      posting[id] = count;
+    }
+    postings_[term] = std::move(posting);
+  }
+  
+  // doc_freq_
+  uint64_t df_size = 0;
+  if(!fread(&df_size, sizeof(df_size), 1, in)) return Status(StatusCode::kInternal, "read failed");
+  doc_freq_.clear();
+  for(uint64_t i = 0; i < df_size; ++i) {
+    std::string term;
+    Status s = ReadString(in, term);
+    if(!s.ok()) return s;
+    int freq;
+    if(!fread(&freq, sizeof(freq), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    doc_freq_[term] = freq;
+  }
+  
+  return Status::Ok();
+}
+
+Status Shard::Save(std::FILE* out) const {
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  
+  // Save docs_
+  uint64_t docs_size = docs_.size();
+  if(!fwrite(&docs_size, sizeof(docs_size), 1, out)) return Status(StatusCode::kInternal, "write failed");
+  for(const auto& doc : docs_) {
+    Status s = WriteString(out, doc.key);
+    if(!s.ok()) return s;
+    
+    // Save metadata
+    uint64_t meta_size = doc.meta.size();
+    if(!fwrite(&meta_size, sizeof(meta_size), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    for(const auto& [k, v] : doc.meta) {
+      s = WriteString(out, k);
+      if(!s.ok()) return s;
+      s = WriteString(out, v);
+      if(!s.ok()) return s;
+    }
+    
+    if(!fwrite(&doc.offset, sizeof(doc.offset), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    if(!fwrite(&doc.deleted, sizeof(doc.deleted), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    
+    // Save expiry
+    bool has_expiry = doc.expiry.has_value();
+    if(!fwrite(&has_expiry, sizeof(has_expiry), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    if(has_expiry) {
+      auto time_val = doc.expiry->time_since_epoch().count();
+      if(!fwrite(&time_val, sizeof(time_val), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    }
+    
+    // Save text
+    bool has_text = doc.text.has_value();
+    if(!fwrite(&has_text, sizeof(has_text), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    if(has_text) {
+      s = WriteString(out, *doc.text);
+      if(!s.ok()) return s;
+    }
+  }
+  
+  // Save key_to_id_
+  uint64_t map_size = key_to_id_.size();
+  if(!fwrite(&map_size, sizeof(map_size), 1, out)) return Status(StatusCode::kInternal, "write failed");
+  for(const auto& [key, id] : key_to_id_) {
+    Status s = WriteString(out, key);
+    if(!s.ok()) return s;
+    if(!fwrite(&id, sizeof(id), 1, out)) return Status(StatusCode::kInternal, "write failed");
+  }
+  
+  // Save store_, index_, keyword_index_
+  Status s = store_.Save(out);
+  if(!s.ok()) return s;
+  
+  s = index_->Save(out);
+  if(!s.ok()) return s;
+  
+  s = keyword_index_.Save(out);
+  if(!s.ok()) return s;
+  
+  return Status::Ok();
+}
+
+Status Shard::Load(std::FILE* in) {
+  std::unique_lock<std::shared_mutex> lock(mutex_);
+  
+  // Load docs_
+  uint64_t docs_size = 0;
+  if(!fread(&docs_size, sizeof(docs_size), 1, in)) return Status(StatusCode::kInternal, "read failed");
+  docs_.resize(docs_size);
+  for(auto& doc : docs_) {
+    Status s = ReadString(in, doc.key);
+    if(!s.ok()) return s;
+    
+    // Load metadata
+    uint64_t meta_size = 0;
+    if(!fread(&meta_size, sizeof(meta_size), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    doc.meta.clear();
+    for(uint64_t i = 0; i < meta_size; ++i) {
+      std::string k, v;
+      s = ReadString(in, k);
+      if(!s.ok()) return s;
+      s = ReadString(in, v);
+      if(!s.ok()) return s;
+      doc.meta[k] = v;
+    }
+    
+    if(!fread(&doc.offset, sizeof(doc.offset), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    if(!fread(&doc.deleted, sizeof(doc.deleted), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    
+    // Load expiry
+    bool has_expiry = false;
+    if(!fread(&has_expiry, sizeof(has_expiry), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    if(has_expiry) {
+      std::chrono::system_clock::duration::rep time_val;
+      if(!fread(&time_val, sizeof(time_val), 1, in)) return Status(StatusCode::kInternal, "read failed");
+      doc.expiry = std::chrono::system_clock::time_point(std::chrono::system_clock::duration(time_val));
+    }
+    
+    // Load text
+    bool has_text = false;
+    if(!fread(&has_text, sizeof(has_text), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    if(has_text) {
+      std::string text;
+      s = ReadString(in, text);
+      if(!s.ok()) return s;
+      doc.text = text;
+    }
+  }
+  
+  // Load key_to_id_
+  uint64_t map_size = 0;
+  if(!fread(&map_size, sizeof(map_size), 1, in)) return Status(StatusCode::kInternal, "read failed");
+  key_to_id_.clear();
+  for(uint64_t i = 0; i < map_size; ++i) {
+    std::string key;
+    uint32_t id;
+    Status s = ReadString(in, key);
+    if(!s.ok()) return s;
+    if(!fread(&id, sizeof(id), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    key_to_id_[key] = id;
+  }
+  
+  // Load store_, index_, keyword_index_
+  Status s = store_.Load(in);
+  if(!s.ok()) return s;
+  
+  s = index_->Load(in);
+  if(!s.ok()) return s;
+  
+  s = keyword_index_.Load(in);
+  if(!s.ok()) return s;
+  
   return Status::Ok();
 }
 

@@ -3,6 +3,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <vector>
+#include <cstdio>
 
 #include "core/index/index.h"
 #include "core/clustering/kmeans.h"
@@ -31,6 +32,9 @@ class IvfSq8Index : public Index {
 
   bool IsTrained() const { return trained_; }
   Status Train();
+  
+  Status Save(std::FILE* out) const override;
+  Status Load(std::FILE* in) override;
 
  private:
   const VectorStore* store_;

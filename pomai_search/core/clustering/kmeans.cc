@@ -146,4 +146,29 @@ int KMeans::AssignOne(const float* vector) const {
     return best_c;
 }
 
+Status KMeans::Save(std::FILE* out) const {
+    if(!fwrite(&dim_, sizeof(dim_), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    if(!fwrite(&config_.k, sizeof(config_.k), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    // Write centroids
+    uint64_t sz = centroids_.size();
+    if(!fwrite(&sz, sizeof(sz), 1, out)) return Status(StatusCode::kInternal, "write failed");
+    if(sz > 0 && fwrite(centroids_.data(), sizeof(float), sz, out) != sz) return Status(StatusCode::kInternal, "write failed");
+    return Status::Ok();
+}
+
+Status KMeans::Load(std::FILE* in) {
+    if(!fread(&dim_, sizeof(dim_), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    int k = 0;
+    if(!fread(&k, sizeof(k), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    // Ensure k matches config if config was set? Or overwrite config_.k?
+    // We treat loaded data as authoritative for logic.
+    config_.k = k;
+    
+    uint64_t sz = 0;
+    if(!fread(&sz, sizeof(sz), 1, in)) return Status(StatusCode::kInternal, "read failed");
+    centroids_.resize(sz);
+    if(sz > 0 && fread(centroids_.data(), sizeof(float), sz, in) != sz) return Status(StatusCode::kInternal, "read failed");
+    return Status::Ok();
+}
+
 }  // namespace pomai_search
