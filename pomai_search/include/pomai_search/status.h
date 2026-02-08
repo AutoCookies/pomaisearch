@@ -79,9 +79,6 @@ class StatusOr {
   void EnsureNotOk() {
     if (status_.ok()) {
       status_ = Status(StatusCode::kInternal, "StatusOr constructed with OK status");
-#ifndef NDEBUG
-      assert(false && "StatusOr constructed with OK status");
-#endif
     }
   }
 
