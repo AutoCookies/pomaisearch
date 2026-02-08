@@ -7,10 +7,14 @@ option(POMAI_SEARCH_ENABLE_AVX2 "Enable AVX2 kernels" ON)
 option(POMAI_SEARCH_ENABLE_ASAN "Enable ASAN" OFF)
 option(POMAI_SEARCH_ENABLE_TSAN "Enable TSAN" OFF)
 option(POMAI_SEARCH_ENABLE_UBSAN "Enable UBSAN" OFF)
+option(POMAI_SEARCH_BUILD_C_API "Build C ABI wrapper library" OFF)
+option(POMAI_SEARCH_C_API_SHARED "Build C ABI as shared library" ON)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+enable_language(C)
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
@@ -48,6 +52,40 @@ target_compile_definitions(pomai_search_core PRIVATE $<$<BOOL:${POMAI_SEARCH_ENA
 target_compile_options(pomai_search_core PRIVATE -O3 -Wall -Wextra -Wpedantic -Werror)
 
 set_source_files_properties(core/kernels/avx2_kernels.cc PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma")
+
+if(POMAI_SEARCH_BUILD_C_API)
+  set(POMAI_SEARCH_C_API_LIB_TYPE STATIC)
+  if(POMAI_SEARCH_C_API_SHARED)
+    set(POMAI_SEARCH_C_API_LIB_TYPE SHARED)
+    set_target_properties(pomai_search_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  endif()
+
+  add_library(pomai_search_c ${POMAI_SEARCH_C_API_LIB_TYPE}
+    src/c_api.cc
+  )
+  target_link_libraries(pomai_search_c PRIVATE pomai_search_core)
+  target_include_directories(pomai_search_c
+    PUBLIC
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  )
+  target_compile_options(pomai_search_c PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  if(POMAI_SEARCH_C_API_SHARED)
+    target_compile_definitions(pomai_search_c PRIVATE POMAI_SEARCH_C_API_SHARED=1)
+  endif()
+
+  find_package(Git QUIET)
+  set(POMAI_SEARCH_GIT_SHA "unknown")
+  if(GIT_FOUND)
+    execute_process(
+      COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      OUTPUT_VARIABLE POMAI_SEARCH_GIT_SHA
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_QUIET
+    )
+  endif()
+  target_compile_definitions(pomai_search_c PRIVATE POMAI_SEARCH_GIT_SHA="${POMAI_SEARCH_GIT_SHA}")
+endif()
 
 add_executable(pomai-searchd
   app/search_server.cc
@@ -90,6 +128,7 @@ target_include_directories(pomai_search_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR
 target_compile_options(pomai_search_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_test(NAME pomai_search_tests COMMAND pomai_search_tests)
+set_tests_properties(pomai_search_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(pomai_search_bench_flat
   bench/bench_flat.cc
@@ -146,6 +185,31 @@ add_executable(pomai_search_bench_simd
 target_link_libraries(pomai_search_bench_simd PRIVATE pomai_search_core)
 
 target_compile_options(pomai_search_bench_simd PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+if(POMAI_SEARCH_BUILD_C_API)
+  add_executable(pomai_search_c_tests
+    tests/test_c_api.c
+  )
+  find_package(Threads REQUIRED)
+  target_link_libraries(pomai_search_c_tests PRIVATE pomai_search_c)
+  target_link_libraries(pomai_search_c_tests PRIVATE Threads::Threads)
+  target_include_directories(pomai_search_c_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  set_property(TARGET pomai_search_c_tests PROPERTY C_STANDARD 11)
+  target_compile_options(pomai_search_c_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pomai_search_c_tests COMMAND pomai_search_c_tests)
+
+  add_executable(pomai_search_c_api_hello examples/c_api_hello.c)
+  target_link_libraries(pomai_search_c_api_hello PRIVATE pomai_search_c)
+  target_include_directories(pomai_search_c_api_hello PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  set_property(TARGET pomai_search_c_api_hello PROPERTY C_STANDARD 11)
+  target_compile_options(pomai_search_c_api_hello PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+  add_executable(pomai_search_c_api_iter_export examples/c_api_iter_export.c)
+  target_link_libraries(pomai_search_c_api_iter_export PRIVATE pomai_search_c)
+  target_include_directories(pomai_search_c_api_iter_export PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  set_property(TARGET pomai_search_c_api_iter_export PROPERTY C_STANDARD 11)
+  target_compile_options(pomai_search_c_api_iter_export PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
 
 if(POMAI_SEARCH_ENABLE_ASAN)
   target_compile_options(pomai_search_core PRIVATE -fsanitize=address -fno-omit-frame-pointer)

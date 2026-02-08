@@ -48,3 +48,9 @@ index->Add(id, vector_data);
 // 4. Search
 auto results = index->Search(query_vector, k);
 ```
+
+## C ABI
+
+Pomai Search ships an optional, stable C ABI suitable for bindings in other languages.
+Enable it with `-DPOMAI_SEARCH_BUILD_C_API=ON` and include `pomai_search/c_api.h`. See
+`pomai_search/docs/c_api.md` for ownership rules, versioning, and examples.

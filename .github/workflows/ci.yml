@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        build_type: [Debug, Release]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configure
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DPOMAI_SEARCH_BUILD_C_API=ON
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  asan-ubsan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configure (ASAN/UBSAN)
+        run: |
+          cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug \
+            -DPOMAI_SEARCH_BUILD_C_API=ON \
+            -DPOMAI_SEARCH_ENABLE_ASAN=ON \
+            -DPOMAI_SEARCH_ENABLE_UBSAN=ON
+      - name: Build
+        run: cmake --build build-asan
+      - name: Test
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: ctest --test-dir build-asan --output-on-failure

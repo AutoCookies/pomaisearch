@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "core/serialize/snapshot.h"
 #include "pomai_search/status.h"
 #include "pomai_search/types.h"
 
@@ -186,6 +187,19 @@ class SearchEngine {
    * @return Stats structure with point counts
    */
   Stats GetStats() const;
+
+  /**
+   * @brief Returns the configured vector dimension.
+   */
+  int Dim() const;
+
+  /**
+   * @brief Exports all non-expired records for iteration or snapshotting.
+   *
+   * @param filter Optional metadata filter to apply.
+   * @return StatusOr containing exported records or an error status.
+   */
+  StatusOr<std::vector<SnapshotRecord>> ExportRecords(const Filter& filter) const;
 
   /**
    * @brief Returns metrics in JSON format.
