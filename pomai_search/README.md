@@ -28,8 +28,10 @@ Pomai Search is an embeddable vector search engine designed for production use. 
 git clone https://github.com/yourusername/pomaisearch.git
 cd pomaisearch/pomai_search
 mkdir build && cd build
-cmake ..
-make -j4
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Debug -DPOMAI_BUILD_TESTS=ON
+cmake --build . -j$(nproc)
+ctest --output-on-failure
 ```
 
 ### Basic Usage

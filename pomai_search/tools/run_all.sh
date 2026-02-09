@@ -11,3 +11,4 @@ ctest --test-dir "$BUILD_DIR" --output-on-failure
 "$BUILD_DIR/pomai_search_bench_flat" --n 1000 --dim 32 --queries 50 --topk 5
 "$BUILD_DIR/pomai_search_bench_hnsw" --n 1000 --dim 32 --queries 50 --topk 5
 "$BUILD_DIR/pomai_search_bench_recall" --n 1000 --dim 32 --queries 50 --topk 5
+
