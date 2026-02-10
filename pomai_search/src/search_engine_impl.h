@@ -182,6 +182,7 @@ struct ShardDoc {
   Metadata meta;
   size_t offset = 0;
   bool deleted = false;
+  uint32_t gen = 0;
   std::optional<std::chrono::system_clock::time_point> expiry;
   std::optional<std::string> text;
 };
@@ -194,7 +195,9 @@ class Shard {
         store_(dim, alignment, reserve_vectors),
         similarity_(cfg.similarity),
         dot_func_(pomai_search::GetDotFunc(cfg.enable_avx2)),
-        max_points_(cfg.max_points_per_shard) {
+        max_points_(cfg.max_points_per_shard),
+        max_candidates_(std::max(1, cfg.max_candidates)),
+        rerank_factor_(std::max(1, cfg.rerank_factor)) {
     if (cfg.index_type == pomai_search::SearchEngineConfig::IndexType::Hnsw) {
       uint32_t seed =
           static_cast<uint32_t>(cfg.global_seed ^ pomai_search::StableHash64("hnsw_seed"));
@@ -282,6 +285,7 @@ class Shard {
       auto& doc = docs_[id];
       doc.meta = std::move(meta);
       doc.deleted = false;
+      ++doc.gen;
       doc.expiry = expiry;
       doc.text = text;
       doc.offset = offset;
@@ -290,6 +294,7 @@ class Shard {
       doc.key = std::string(key);
       doc.meta = std::move(meta);
       doc.deleted = false;
+      ++doc.gen;
       doc.expiry = expiry;
       doc.text = text;
       doc.offset = offset;
@@ -313,6 +318,7 @@ class Shard {
     }
     uint32_t id = it->second;
     docs_[id].deleted = true;
+    ++docs_[id].gen;
     if (live_docs_ > 0) {
       --live_docs_;
     }
@@ -391,34 +397,59 @@ class Shard {
     if (similarity_ == SearchEngineConfig::Similarity::Cosine) {
       query = NormalizeVector(query, &normalized);
     }
-    constexpr int kMaxCandidateBound = 2000;
-    int bounded_topk = std::min(topk, kMaxCandidateBound);
-    int candidate_count = std::min(std::max(bounded_topk * 4, bounded_topk), kMaxCandidateBound);
+    int bounded_topk = std::min(topk, max_candidates_);
+    int candidate_count = std::min(std::max(bounded_topk * rerank_factor_, bounded_topk), max_candidates_);
     auto candidates = index_->Search(query, candidate_count, filter);
     if (!candidates.ok()) {
       return candidates.status();
     }
 
+    struct SnapshotDoc {
+      uint32_t id;
+      uint32_t gen;
+      std::string key;
+      Metadata meta;
+      size_t offset;
+    };
+
+    std::vector<SnapshotDoc> snapshot_docs;
+    snapshot_docs.reserve(candidates.value().size());
+    {
+      std::shared_lock<std::shared_mutex> lock(mutex_);
+      for (const auto& cand : candidates.value()) {
+        if (cand.id >= docs_.size()) continue;
+        const auto& doc = docs_[cand.id];
+        if (doc.deleted) continue;
+        if (IsExpired(doc.expiry)) continue;
+        if (!MetadataFilterMatch(filter, doc.meta)) continue;
+        snapshot_docs.push_back(SnapshotDoc{cand.id, doc.gen, doc.key, doc.meta, doc.offset});
+      }
+    }
+
     std::vector<CandidateResult> results;
-    results.reserve(candidates.value().size());
-
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    results.reserve(snapshot_docs.size());
     auto store_guard = store_.AcquireRead();
-    for (const auto& cand : candidates.value()) {
-      if (cand.id >= docs_.size()) continue;
-      const auto& doc = docs_[cand.id];
-      if (doc.deleted) continue;
-      if (IsExpired(doc.expiry)) continue;
-      if (!MetadataFilterMatch(filter, doc.meta)) continue;
-
-      const float* vec = store_.Get(doc.offset, store_guard);
+    for (const auto& snap : snapshot_docs) {
+      const float* vec = store_.Get(snap.offset, store_guard);
       float exact_score = dot_func_(query.data, vec, dim_);
 
+      bool still_live = false;
+      {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        if (snap.id < docs_.size()) {
+          const auto& doc = docs_[snap.id];
+          still_live = (!doc.deleted) && !IsExpired(doc.expiry) && (doc.gen == snap.gen);
+        }
+      }
+      if (!still_live) {
+        continue;
+      }
+
       CandidateResult item;
-      item.id = cand.id;
-      item.key = doc.key;
+      item.id = snap.id;
+      item.key = snap.key;
       item.score = SanitizeScore(exact_score);
-      item.meta = doc.meta;
+      item.meta = snap.meta;
       results.push_back(std::move(item));
     }
 
@@ -617,6 +648,7 @@ class Shard {
         ShardDoc& doc = docs_[gc_cursor_];
         if (!doc.deleted && pomai_search::IsExpired(doc.expiry)) {
           doc.deleted = true;
+          ++doc.gen;
           if (live_docs_ > 0) {
             --live_docs_;
           }
@@ -649,6 +681,8 @@ class Shard {
   SearchEngineConfig::Similarity similarity_;
   DotFunc dot_func_;
   size_t max_points_;
+  int max_candidates_;
+  int rerank_factor_;
   std::unique_ptr<Index> index_;
   KeywordIndex keyword_index_;
   size_t gc_cursor_ = 0;

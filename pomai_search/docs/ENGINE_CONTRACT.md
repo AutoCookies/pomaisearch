@@ -21,3 +21,10 @@ Pomai Search is a deterministic, embeddable, single-node vector search engine wi
 - Cross-process transactional consistency.
 - Crash recovery without external source of truth.
 - Infinite-memory or unbounded-latency behavior.
+
+
+## Phase 2 Stability Closure
+- IVF-Flat and IVF-SQ8 upserts are generation-versioned; stale postings are filtered at gather-time and compacted list-locally.
+- Compaction triggers: stale ratio threshold, max list entries, or max list bytes.
+- Deterministic degradation: bounded max candidates + bounded rerank factor + bounded IVF probes.
+- Search rerank now snapshots candidate metadata under shard lock, scores outside the lock, and validates generation before return.
