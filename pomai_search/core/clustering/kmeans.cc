@@ -29,6 +29,7 @@ Status KMeans::Train(const VectorStore& store, const std::vector<uint32_t>& indi
         std::shuffle(sample_indices.begin(), sample_indices.end(), rng_);
         sample_indices.resize(k);
     }
+    auto store_guard = store.AcquireRead();
     for (int i = 0; i < k; ++i) {
         // We need offset from indices
         // indices contains IDs or offsets? The API says 'indices' which likely mapped to offsets?
@@ -36,7 +37,7 @@ Status KMeans::Train(const VectorStore& store, const std::vector<uint32_t>& indi
         // Assuming indices are VectorStore offsets for simplicity here, or store has random access by ID?
         // VectorStore doesn't expose ID->Offset. It only has "Get(offset)".
         // So `indices` MUST be offsets.
-        const float* src = store.Get(sample_indices[i]);
+        const float* src = store.Get(sample_indices[i], store_guard);
         std::copy(src, src + dim_, centroids_.data() + i * dim_);
     }
 
@@ -55,7 +56,7 @@ Status KMeans::Train(const VectorStore& store, const std::vector<uint32_t>& indi
         std::fill(counts.begin(), counts.end(), 0);
 
         for (int i = 0; i < n; ++i) {
-            const float* vec = store.Get(indices[i]);
+            const float* vec = store.Get(indices[i], store_guard);
             int best_c = -1;
             float best_dist = -std::numeric_limits<float>::max(); // Dot product: max is best
             

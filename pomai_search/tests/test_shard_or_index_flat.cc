@@ -24,7 +24,8 @@ POMAI_TEST(FlatIndexMatchesBruteForce) {
     float norm = std::sqrt(norm_sq);
     data.push_back(vec);
     
-    size_t offset = store.Append(vec.data());
+    auto guard = store.AcquireWrite();
+    size_t offset = store.Insert(vec.data(), guard);
     index.Upsert(i, offset, norm);
   }
   std::vector<float> query(kDim);

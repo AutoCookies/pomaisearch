@@ -20,7 +20,8 @@ Status IvfSq8Index::Upsert(uint32_t id, size_t offset, float /*norm*/) {
     id_to_offset_[id] = offset;
     
     if (trained_) {
-        const float* vec = store_->Get(offset);
+        auto store_guard = store_->AcquireRead();
+        const float* vec = store_->Get(offset, store_guard);
         return AddToInvertedList(id, vec);
     } else {
         buffer_ids_.push_back(id);
@@ -69,7 +70,8 @@ Status IvfSq8Index::TrainImpl(const std::unique_lock<std::shared_mutex>& /*lock*
     // Re-ingest
     for(uint32_t id : buffer_ids_) {
          if (id_to_offset_.count(id)) {
-             const float* vec = store_->Get(id_to_offset_[id]);
+             auto store_guard = store_->AcquireRead();
+             const float* vec = store_->Get(id_to_offset_[id], store_guard);
              AddToInvertedList(id, vec);
          }
     }
@@ -96,6 +98,7 @@ Status IvfSq8Index::AddToInvertedList(uint32_t id, const float* vec) {
 
 StatusOr<std::vector<Candidate>> IvfSq8Index::Search(VectorView q, int topk, const Filter& /*f*/) const {
     std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto store_guard = store_->AcquireRead();
     
     // If not trained, fallback to exact search over buffer (Use Flat logic basically)
     if (!trained_) {
@@ -104,7 +107,7 @@ StatusOr<std::vector<Candidate>> IvfSq8Index::Search(VectorView q, int topk, con
         DotFunc dot = GetDotFunc(CpuSupportsAvx2());
         for(uint32_t id : buffer_ids_) {
              if (!id_to_offset_.count(id)) continue;
-             const float* vec = store_->Get(id_to_offset_.at(id));
+             const float* vec = store_->Get(id_to_offset_.at(id), store_guard);
              float score = dot(q.data, vec, dim_);
              if (pq.size() < static_cast<size_t>(topk)) pq.push({score, id});
              else if (score > pq.top().first) { pq.pop(); pq.push({score, id}); }
@@ -181,7 +184,7 @@ StatusOr<std::vector<Candidate>> IvfSq8Index::Search(VectorView q, int topk, con
     
     for(uint32_t id : candidates_to_refine) {
         if (!id_to_offset_.count(id)) continue; 
-        const float* vec = store_->Get(id_to_offset_.at(id));
+        const float* vec = store_->Get(id_to_offset_.at(id), store_guard);
         float score = dot(q.data, vec, dim_); // Exact score (Dot/L2 logic needed? DotFunc handles Dot)
         // If L2, DotFunc might not be correct? 
         // SearchEngine::Similarity::Dot uses DotFunc.

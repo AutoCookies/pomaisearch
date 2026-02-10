@@ -67,6 +67,16 @@ class SearchEngine {
   };
 
   /**
+   * @brief Memory statistics for vector storage.
+   */
+  struct MemoryStats {
+    uint64_t live_vectors = 0;
+    uint64_t total_vectors = 0;
+    uint64_t free_vectors = 0;
+    uint64_t bytes_allocated = 0;
+  };
+
+  /**
    * @brief Opens a new search engine instance with the given configuration.
    * 
    * @param cfg Configuration specifying dimensions, index type, and parameters
@@ -187,6 +197,11 @@ class SearchEngine {
    * @return Stats structure with point counts
    */
   Stats GetStats() const;
+
+  /**
+   * @brief Returns aggregated vector store memory statistics.
+   */
+  MemoryStats GetMemoryStats() const;
 
   /**
    * @brief Returns the configured vector dimension.

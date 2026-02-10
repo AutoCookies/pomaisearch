@@ -14,8 +14,9 @@ void ScalarQuantizer::Train(const VectorStore& store, const std::vector<uint32_t
     min_.assign(dim_, std::numeric_limits<float>::max());
     std::vector<float> max(dim_, std::numeric_limits<float>::lowest());
 
+    auto store_guard = store.AcquireRead();
     for (uint32_t idx : indices) {
-        const float* vec = store.Get(idx);
+        const float* vec = store.Get(idx, store_guard);
         for (int d = 0; d < dim_; ++d) {
             float v = vec[d];
             if (v < min_[d]) min_[d] = v;

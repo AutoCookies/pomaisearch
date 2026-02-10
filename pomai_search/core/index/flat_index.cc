@@ -72,6 +72,7 @@ StatusOr<std::vector<Candidate>> FlatIndex::Search(VectorView q, int topk,
     return Status(StatusCode::kInvalidArgument, "topk must be positive");
   }
   std::shared_lock<std::shared_mutex> lock(mutex_);
+  auto store_guard = store_->AcquireRead();
   std::vector<FlatCandidate> heap;
   heap.reserve(static_cast<size_t>(topk));
   auto worse_first = [](const FlatCandidate& a, const FlatCandidate& b) { return IsBetter(a, b); };
@@ -91,7 +92,7 @@ StatusOr<std::vector<Candidate>> FlatIndex::Search(VectorView q, int topk,
     if (item.deleted) {
       continue;
     }
-    const float* data = store_->Get(item.offset);
+    const float* data = store_->Get(item.offset, store_guard);
     float score = dot_func_(q.data, data, dim_);
     if (similarity_ == SearchEngineConfig::Similarity::Cosine) {
       if (item.norm == 0.0f || query_norm == 0.0f) {

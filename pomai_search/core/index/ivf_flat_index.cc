@@ -24,7 +24,8 @@ Status IvfFlatIndex::Upsert(uint32_t id, size_t offset, float /*norm*/) {
     
     if (trained_) {
         // Quantize and add to list
-        const float* vec = store_->Get(offset);
+        auto store_guard = store_->AcquireRead();
+        const float* vec = store_->Get(offset, store_guard);
         return AddToInvertedList(id, vec);
     } else {
         // Add to buffer
@@ -93,7 +94,8 @@ Status IvfFlatIndex::TrainImpl(const std::unique_lock<std::shared_mutex>& /*lock
     // 3. Re-ingest buffer
     for(uint32_t id : buffer_ids_) {
          if (id_to_offset_.count(id)) {
-             const float* vec = store_->Get(id_to_offset_[id]);
+             auto store_guard = store_->AcquireRead();
+             const float* vec = store_->Get(id_to_offset_[id], store_guard);
              AddToInvertedList(id, vec);
          }
     }
@@ -115,6 +117,7 @@ Status IvfFlatIndex::AddToInvertedList(uint32_t id, const float* vec) {
 
 StatusOr<std::vector<Candidate>> IvfFlatIndex::Search(VectorView q, int topk, const Filter& /*f*/) const {
     std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto store_guard = store_->AcquireRead();
     
     DotFunc dot = GetDotFunc(CpuSupportsAvx2()); // Use kernels
     
@@ -130,7 +133,7 @@ StatusOr<std::vector<Candidate>> IvfFlatIndex::Search(VectorView q, int topk, co
         auto it = id_to_offset_.find(id);
         if (it == id_to_offset_.end()) return; // Deleted
         
-        const float* vec = store_->Get(it->second);
+        const float* vec = store_->Get(it->second, store_guard);
         float score = dot(q.data, vec, dim_);
         
         if (top_k.size() < static_cast<size_t>(topk)) {

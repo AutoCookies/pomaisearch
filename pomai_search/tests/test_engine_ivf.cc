@@ -103,6 +103,45 @@ POMAI_TEST(EngineIvfRecall) {
     
     return true;
 }
+POMAI_TEST(EngineIvfCosineMatchesFlat) {
+  SearchEngineConfig flat_cfg;
+  flat_cfg.dim = 4;
+  flat_cfg.num_shards = 1;
+  flat_cfg.index_type = SearchEngineConfig::IndexType::Flat;
+  flat_cfg.similarity = SearchEngineConfig::Similarity::Cosine;
 
+  SearchEngineConfig ivf_cfg = flat_cfg;
+  ivf_cfg.index_type = SearchEngineConfig::IndexType::IvfFlat;
+  ivf_cfg.ivf_nlist = 1;
+  ivf_cfg.ivf_nprobe = 1;
+
+  auto flat_or = SearchEngine::Open(flat_cfg);
+  auto ivf_or = SearchEngine::Open(ivf_cfg);
+  EXPECT_TRUE(flat_or.ok());
+  EXPECT_TRUE(ivf_or.ok());
+  auto flat = std::move(flat_or.value());
+  auto ivf = std::move(ivf_or.value());
+
+  std::vector<std::vector<float>> data = {
+      {1.0f, 2.0f, 3.0f, 4.0f},
+      {4.0f, 3.0f, 2.0f, 1.0f},
+      {1.0f, 0.0f, 0.0f, 0.0f},
+  };
+  for (size_t i = 0; i < data.size(); ++i) {
+    std::string key = std::to_string(i);
+    flat->Upsert(key, VectorView{data[i].data(), flat_cfg.dim});
+    ivf->Upsert(key, VectorView{data[i].data(), flat_cfg.dim});
+  }
+
+  float query[4] = {1.0f, 1.0f, 0.0f, 0.0f};
+  auto flat_res = flat->Search(VectorView{query, flat_cfg.dim});
+  auto ivf_res = ivf->Search(VectorView{query, flat_cfg.dim});
+  EXPECT_TRUE(flat_res.ok());
+  EXPECT_TRUE(ivf_res.ok());
+  EXPECT_TRUE(!flat_res.value().empty());
+  EXPECT_TRUE(!ivf_res.value().empty());
+  EXPECT_EQ(flat_res.value().front().key, ivf_res.value().front().key);
+  return true;
+}
 
 }  // namespace pomai_search::test

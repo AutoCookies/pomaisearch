@@ -28,14 +28,16 @@ class HnswIndex : public Index {
 
  private:
   float ComputeNorm(const float* data) const;
-  float Dist(VectorView q, uint32_t id) const;
+  float Dist(VectorView q, uint32_t id, const VectorStore::ReadGuard& guard) const;
   float Dist(VectorView q, const float* data) const;
-  float Score(VectorView q, uint32_t internal_id) const;
+  float Score(VectorView q, uint32_t internal_id, const VectorStore::ReadGuard& guard) const;
   int RandomLevel();
-  std::vector<uint32_t> SearchLayer(VectorView q, uint32_t entry, int level, int ef) const;
+  std::vector<uint32_t> SearchLayer(VectorView q, uint32_t entry, int level, int ef,
+                                    const VectorStore::ReadGuard& guard) const;
   void ConnectNewNode(uint32_t node_id, int level, const std::vector<uint32_t>& candidates);
   std::vector<uint32_t> PruneNeighbors(uint32_t node_id, const std::vector<uint32_t>& candidates,
-                                       int max_links, int level) const;
+                                       int max_links, int level,
+                                       const VectorStore::ReadGuard& guard) const;
   
   // Helpers for memory layout
   void SetLink(uint32_t node_id, int level, int idx, uint32_t target);
