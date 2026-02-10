@@ -4,6 +4,7 @@
 #include <numeric>
 #include <random>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "pomai_search/search_engine.h"
@@ -96,6 +97,14 @@ int main(int argc, char** argv) {
     return 1;
   }
   auto engine = std::move(engine_or.value());
+  pomai_search::SearchEngineConfig flat_cfg = engine_cfg;
+  flat_cfg.index_type = pomai_search::SearchEngineConfig::IndexType::Flat;
+  auto flat_or = pomai_search::SearchEngine::Open(flat_cfg);
+  if (!flat_or.ok()) {
+    std::cerr << "Failed to open flat engine: " << flat_or.status().ToString() << "\n";
+    return 1;
+  }
+  auto flat = std::move(flat_or.value());
 
   std::mt19937 rng(cfg.seed);
   std::uniform_real_distribution<float> dist(0.0f, 1.0f);
@@ -108,7 +117,9 @@ int main(int argc, char** argv) {
 
   auto ingest_start = std::chrono::steady_clock::now();
   for (int i = 0; i < cfg.n; ++i) {
-    engine->Upsert("doc" + std::to_string(i), pomai_search::VectorView{data[i].data(), cfg.dim});
+    auto view = pomai_search::VectorView{data[i].data(), cfg.dim};
+    engine->Upsert("doc" + std::to_string(i), view);
+    flat->Upsert("doc" + std::to_string(i), view);
   }
   auto ingest_end = std::chrono::steady_clock::now();
   double ingest_s = std::chrono::duration_cast<std::chrono::duration<double>>(ingest_end - ingest_start).count();
@@ -129,21 +140,38 @@ int main(int argc, char** argv) {
 
   std::vector<double> latencies;
   latencies.reserve(cfg.queries);
+  double recall_sum = 0.0;
   for (int i = 0; i < cfg.queries; ++i) {
     pomai_search::SearchEngine::QueryOptions opts;
     opts.topk = cfg.topk;
     auto start = std::chrono::steady_clock::now();
-    engine->Search(pomai_search::VectorView{queries[i].data(), cfg.dim}, opts);
+    auto approx = engine->Search(pomai_search::VectorView{queries[i].data(), cfg.dim}, opts);
     auto end = std::chrono::steady_clock::now();
     double ms = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(end - start).count();
     latencies.push_back(ms);
+    auto truth = flat->Search(pomai_search::VectorView{queries[i].data(), cfg.dim}, opts);
+    if (approx.ok() && truth.ok()) {
+      std::unordered_set<std::string> truth_keys;
+      for (const auto& item : truth.value()) {
+        truth_keys.insert(item.key);
+      }
+      size_t hits = 0;
+      for (const auto& item : approx.value()) {
+        if (truth_keys.count(item.key) > 0) {
+          ++hits;
+        }
+      }
+      recall_sum += static_cast<double>(hits) / static_cast<double>(cfg.topk);
+    }
   }
   double avg = std::accumulate(latencies.begin(), latencies.end(), 0.0) / latencies.size();
   double p50 = pomai_search::Percentile(latencies, 0.50);
   double p95 = pomai_search::Percentile(latencies, 0.95);
+  double recall = latencies.empty() ? 0.0 : recall_sum / static_cast<double>(cfg.queries);
 
   std::cout << "Benchmark ivf\n";
   std::cout << "ingest ops/s: " << ingest_rate << "\n";
   std::cout << "query avg ms: " << avg << " p50: " << p50 << " p95: " << p95 << "\n";
+  std::cout << "recall@" << cfg.topk << ": " << recall << "\n";
   return 0;
 }

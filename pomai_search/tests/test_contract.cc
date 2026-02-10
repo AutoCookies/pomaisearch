@@ -3,6 +3,7 @@
 #include "core/serialize/snapshot.h"
 #include "tests/test_framework.h"
 
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -100,9 +101,11 @@ POMAI_TEST(ContractQueries) {
   std::string dataset_json;
   std::string queries_json;
   std::string expected_json;
-  EXPECT_TRUE(ReadFile("tests/contracts/dataset.json", &dataset_json));
-  EXPECT_TRUE(ReadFile("tests/contracts/queries.json", &queries_json));
-  EXPECT_TRUE(ReadFile("tests/contracts/expected.json", &expected_json));
+  std::filesystem::path contracts_dir =
+      std::filesystem::path(__FILE__).parent_path() / "contracts";
+  EXPECT_TRUE(ReadFile((contracts_dir / "dataset.json").string(), &dataset_json));
+  EXPECT_TRUE(ReadFile((contracts_dir / "queries.json").string(), &queries_json));
+  EXPECT_TRUE(ReadFile((contracts_dir / "expected.json").string(), &expected_json));
 
   JsonValue dataset_root;
   std::string error;

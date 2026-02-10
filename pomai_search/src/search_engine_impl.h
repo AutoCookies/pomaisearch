@@ -247,13 +247,15 @@ class Shard {
       id = static_cast<uint32_t>(docs_.size());
     }
 
-    auto store_guard = store_.AcquireWrite();
     size_t offset = 0;
-    if (exists) {
-      offset = docs_[id].offset;
-      store_.Update(offset, vec.data, store_guard);
-    } else {
-      offset = store_.Insert(vec.data, store_guard);
+    {
+      auto store_guard = store_.AcquireWrite();
+      if (exists) {
+        offset = docs_[id].offset;
+        store_.Update(offset, vec.data, store_guard);
+      } else {
+        offset = store_.Insert(vec.data, store_guard);
+      }
     }
 
     // Compute norm
@@ -270,6 +272,7 @@ class Shard {
     Status status = index_->Upsert(id, offset, norm);
     if (!status.ok()) {
       if (!exists) {
+        auto store_guard = store_.AcquireWrite();
         store_.Release(offset, store_guard);
       }
       return status;

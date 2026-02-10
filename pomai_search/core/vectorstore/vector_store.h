@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdio>
+#include <mutex>
 #include <shared_mutex>
 #include <vector>
 

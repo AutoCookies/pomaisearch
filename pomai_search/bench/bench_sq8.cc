@@ -4,6 +4,7 @@
 #include <numeric>
 #include <random>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "pomai_search/search_engine.h"
@@ -18,7 +19,7 @@ struct BenchConfig {
   int queries = 100;
   int topk = 10;
   int ivf_nlist = 100;
-  int ivf_nprobe = 10;
+  int ivf_nprobe = 100;
   uint32_t seed = 42;
 };
 
@@ -57,6 +58,9 @@ int main(int argc, char** argv) {
   // Refine factor is hardcoded in implementation (3.0)
 
   auto engine = std::move(pomai_search::SearchEngine::Open(engine_cfg).value());
+  pomai_search::SearchEngineConfig flat_cfg = engine_cfg;
+  flat_cfg.index_type = pomai_search::SearchEngineConfig::IndexType::Flat;
+  auto flat = std::move(pomai_search::SearchEngine::Open(flat_cfg).value());
 
   std::mt19937 rng(cfg.seed);
   std::uniform_real_distribution<float> dist(0.0f, 1.0f);
@@ -75,13 +79,16 @@ int main(int argc, char** argv) {
 
   auto ingest_start = std::chrono::steady_clock::now();
   for (int i = 0; i < cfg.n; ++i) {
-    engine->Upsert(std::to_string(i), pomai_search::VectorView{data[i].data(), cfg.dim});
+    auto view = pomai_search::VectorView{data[i].data(), cfg.dim};
+    engine->Upsert(std::to_string(i), view);
+    flat->Upsert(std::to_string(i), view);
   }
   auto ingest_end = std::chrono::steady_clock::now();
   double ingest_s = std::chrono::duration_cast<std::chrono::duration<double>>(ingest_end - ingest_start).count();
   
   // Queries (Self Search)
   int recall_1 = 0;
+  double recall_sum = 0.0;
   std::vector<double> latencies;
   latencies.reserve(cfg.queries);
 
@@ -98,6 +105,20 @@ int main(int argc, char** argv) {
     if (res.ok() && !res.value().empty() && res.value().front().key == std::to_string(i)) {
       recall_1++;
     }
+    auto truth = flat->Search(pomai_search::VectorView{data[i].data(), cfg.dim}, opts);
+    if (res.ok() && truth.ok()) {
+      std::unordered_set<std::string> truth_keys;
+      for (const auto& item : truth.value()) {
+        truth_keys.insert(item.key);
+      }
+      size_t hits = 0;
+      for (const auto& item : res.value()) {
+        if (truth_keys.count(item.key) > 0) {
+          ++hits;
+        }
+      }
+      recall_sum += static_cast<double>(hits) / static_cast<double>(cfg.topk);
+    }
   }
 
   double avg = std::accumulate(latencies.begin(), latencies.end(), 0.0) / latencies.size();
@@ -107,6 +128,7 @@ int main(int argc, char** argv) {
   std::cout << "Ingest: " << (cfg.n / ingest_s) << " ops/s\n";
   std::cout << "Latency: avg=" << avg << "ms p95=" << p95 << "ms\n";
   std::cout << "Recall@1: " << recall_1 << "/" << cfg.queries << " (" << (100.0 * recall_1 / cfg.queries) << "%)\n";
+  std::cout << "Recall@" << cfg.topk << ": " << (recall_sum / static_cast<double>(cfg.queries)) << "\n";
   
   return 0;
 }

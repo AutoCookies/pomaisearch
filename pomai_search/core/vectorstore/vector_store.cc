@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <mutex>
 
 namespace pomai_search {
 
@@ -39,7 +40,7 @@ size_t VectorStore::Insert(const float* data, WriteGuard& /*guard*/) {
     free_list_.pop_back();
   } else {
     slot = live_.size();
-    live_.push_back(1);
+    live_.push_back(0);
   }
   size_t block_index = slot / block_vectors_;
   size_t block_offset = (slot % block_vectors_) * static_cast<size_t>(dim_);
