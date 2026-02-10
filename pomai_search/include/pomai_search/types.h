@@ -48,7 +48,7 @@ struct SearchEngineConfig {
   int ivf_nlist = 100;
   int ivf_nprobe = 10;
   uint64_t global_seed = 0;
-  uint32_t contract_version = 1;
+  uint32_t contract_version = 3;
 };
 
 enum class FusionMethod { WeightedSum, Rrf };

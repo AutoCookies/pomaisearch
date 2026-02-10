@@ -94,7 +94,8 @@ int main(int argc, char** argv) {
       norm_sq += data[i][d] * data[i][d];
     }
     float norm = std::sqrt(norm_sq);
-    size_t offset = store.Append(data[i].data());
+    auto guard = store.AcquireWrite();
+    size_t offset = store.Insert(data[i].data(), guard);
     flat.Upsert(i, offset, norm);
     hnsw.Upsert(i, offset, norm);
   }

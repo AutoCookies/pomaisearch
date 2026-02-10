@@ -332,13 +332,33 @@ std::cout << "Deleted: " << stats.num_deleted << "\n";
 
 ---
 
+### GetMemoryStats
+
+```cpp
+MemoryStats GetMemoryStats() const;
+```
+
+Returns aggregated VectorStore memory statistics.
+
+**MemoryStats:**
+```cpp
+struct MemoryStats {
+    uint64_t live_vectors;
+    uint64_t total_vectors;
+    uint64_t free_vectors;
+    uint64_t bytes_allocated;
+};
+```
+
+---
+
 ### MetricsJson
 
 ```cpp
 std::string MetricsJson() const;
 ```
 
-Returns metrics in JSON format for monitoring.
+Returns metrics in JSON format for monitoring, including VectorStore and index counters.
 
 **Returns:**
 - JSON string with query latencies, throughput, etc.
@@ -391,6 +411,8 @@ struct SearchEngineConfig {
         Dot,       // Dot product (higher = more similar)
         Cosine     // Cosine similarity (normalized dot product)
     } similarity = Similarity::Dot;
+
+    // Cosine note: vectors are normalized on ingest and queries are normalized on search.
     
     // Performance
     int num_shards = 1;             // Parallelism (1-16 recommended)

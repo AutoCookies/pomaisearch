@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -22,6 +23,7 @@
 #include "core/serialize/snapshot.h"
 #include "core/vectorstore/vector_store.h"
 #include "pomai_search/hash.h"
+#include "pomai_search/logging.h"
 #include "pomai_search/observability/metrics.h"
 #include "pomai_search/scoring.h"
 #include "pomai_search/search_engine.h"
@@ -47,6 +49,25 @@ inline std::vector<std::string> Tokenize(std::string_view text) {
     tokens.push_back(current);
   }
   return tokens;
+}
+
+inline VectorView NormalizeVector(VectorView input, std::vector<float>* scratch) {
+  if (input.data == nullptr || input.dim <= 0) {
+    return input;
+  }
+  float sum = 0.0f;
+  for (int i = 0; i < input.dim; ++i) {
+    sum += input.data[i] * input.data[i];
+  }
+  if (sum <= 0.0f) {
+    return input;
+  }
+  float inv = 1.0f / std::sqrt(sum);
+  scratch->resize(static_cast<size_t>(input.dim));
+  for (int i = 0; i < input.dim; ++i) {
+    (*scratch)[static_cast<size_t>(i)] = input.data[i] * inv;
+  }
+  return VectorView{scratch->data(), input.dim};
 }
 }  // namespace
 
@@ -206,6 +227,12 @@ class Shard {
     if (vec.dim != dim_ || vec.data == nullptr) {
       return Status(StatusCode::kInvalidArgument, "dimension mismatch");
     }
+    PurgeExpired(32);
+    std::vector<float> normalized;
+    if (similarity_ == SearchEngineConfig::Similarity::Cosine) {
+      vec = NormalizeVector(vec, &normalized);
+    }
+
     std::unique_lock<std::shared_mutex> lock(mutex_);
     uint32_t id;
     bool exists = false;
@@ -214,23 +241,37 @@ class Shard {
       id = it->second;
       exists = true;
     } else {
-      if (max_points_ > 0 && docs_.size() >= max_points_) {
+      if (max_points_ > 0 && live_docs_ >= max_points_) {
         return Status(StatusCode::kResourceExhausted, "shard at capacity");
       }
       id = static_cast<uint32_t>(docs_.size());
     }
 
-    // Append to VectorStore
-    size_t offset = store_.Append(vec.data);
+    auto store_guard = store_.AcquireWrite();
+    size_t offset = 0;
+    if (exists) {
+      offset = docs_[id].offset;
+      store_.Update(offset, vec.data, store_guard);
+    } else {
+      offset = store_.Insert(vec.data, store_guard);
+    }
 
     // Compute norm
     float norm = 0.0f;
     float dot_prod = dot_func_(vec.data, vec.data, dim_);
     norm = std::sqrt(dot_prod);
+#ifndef NDEBUG
+    if (similarity_ == SearchEngineConfig::Similarity::Cosine && norm > 0.0f) {
+      assert(std::fabs(norm - 1.0f) < 1e-3f && "cosine vectors must be normalized");
+    }
+#endif
 
     // Upsert to Index
     Status status = index_->Upsert(id, offset, norm);
     if (!status.ok()) {
+      if (!exists) {
+        store_.Release(offset, store_guard);
+      }
       return status;
     }
 
@@ -251,11 +292,13 @@ class Shard {
       doc.offset = offset;
       key_to_id_.emplace(doc.key, id);
       docs_.push_back(doc);
+      ++live_docs_;
     }
 
     // Upsert Keyword Index (thread-safe)
     keyword_index_.Upsert(id, text);
 
+    lock.unlock();
     return Status::Ok();
   }
 
@@ -267,8 +310,17 @@ class Shard {
     }
     uint32_t id = it->second;
     docs_[id].deleted = true;
+    if (live_docs_ > 0) {
+      --live_docs_;
+    }
+    size_t offset = docs_[id].offset;
     keyword_index_.Delete(id);
-    return index_->Delete(id);
+    lock.unlock();
+    Status status = index_->Delete(id);
+    auto store_guard = store_.AcquireWrite();
+    store_.Release(offset, store_guard);
+    PurgeExpired(32);
+    return status;
   }
 
   StatusOr<bool> Exists(std::string_view key) const {
@@ -284,10 +336,10 @@ class Shard {
   }
 
   StatusOr<std::vector<ResultItem>> Search(VectorView query, int topk, const Filter& filter) const {
-    // Hold shard read-lock across index search + doc materialization.
-    // This prevents VectorStore::Append() reallocation during scoring.
-    std::shared_lock<std::shared_mutex> lock(mutex_);
-
+    std::vector<float> normalized;
+    if (similarity_ == SearchEngineConfig::Similarity::Cosine) {
+      query = NormalizeVector(query, &normalized);
+    }
     auto candidates = index_->Search(query, topk, filter);
     if (!candidates.ok()) {
       return candidates.status();
@@ -296,6 +348,7 @@ class Shard {
     std::vector<ResultItem> results;
     results.reserve(candidates.value().size());
 
+    std::shared_lock<std::shared_mutex> lock(mutex_);
     for (const auto& cand : candidates.value()) {
       if (cand.id >= docs_.size()) continue;
       const auto& doc = docs_[cand.id];
@@ -333,8 +386,10 @@ class Shard {
 
   StatusOr<std::vector<CandidateResult>> SearchCandidates(VectorView query, int topk,
                                                           const Filter& filter) const {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
-
+    std::vector<float> normalized;
+    if (similarity_ == SearchEngineConfig::Similarity::Cosine) {
+      query = NormalizeVector(query, &normalized);
+    }
     auto candidates = index_->Search(query, topk, filter);
     if (!candidates.ok()) {
       return candidates.status();
@@ -343,6 +398,7 @@ class Shard {
     std::vector<CandidateResult> results;
     results.reserve(candidates.value().size());
 
+    std::shared_lock<std::shared_mutex> lock(mutex_);
     for (const auto& cand : candidates.value()) {
       if (cand.id >= docs_.size()) continue;
       const auto& doc = docs_[cand.id];
@@ -422,9 +478,10 @@ class Shard {
 
     std::vector<Candidate> vector_candidates;
 
-    // Lock before ANY index_->Search() to prevent VectorStore reallocation race.
-    std::shared_lock<std::shared_mutex> lock(mutex_);
-
+    std::vector<float> normalized;
+    if (has_vector && similarity_ == SearchEngineConfig::Similarity::Cosine) {
+      query = NormalizeVector(query, &normalized);
+    }
     if (has_vector) {
       auto vector_results = index_->Search(query, topk * 2, filter);
       if (!vector_results.ok()) {
@@ -444,6 +501,7 @@ class Shard {
     std::vector<ResultItem> results;
     results.reserve(scores.size());
 
+    std::shared_lock<std::shared_mutex> lock(mutex_);
     for (const auto& pair : scores) {
       uint32_t id = pair.first;
       if (id >= docs_.size()) continue;
@@ -479,6 +537,7 @@ class Shard {
 
   void ExportRecords(std::vector<pomai_search::SnapshotRecord>* out) const {
     std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto store_guard = store_.AcquireRead();
     for (size_t i = 0; i < docs_.size(); ++i) {
       const auto& doc = docs_[i];
       if (doc.deleted) continue;
@@ -490,7 +549,7 @@ class Shard {
       record.text = doc.text;
       record.vector.resize(static_cast<size_t>(dim_));
 
-      const float* data = store_.Get(doc.offset);
+      const float* data = store_.Get(doc.offset, store_guard);
       std::copy(data, data + dim_, record.vector.begin());
       out->push_back(std::move(record));
     }
@@ -507,17 +566,63 @@ class Shard {
     if (IsExpired(doc.expiry)) return Status(StatusCode::kNotFound, "key not found");
 
     std::vector<float> vec(dim_);
-    const float* data = store_.Get(doc.offset);
+    auto store_guard = store_.AcquireRead();
+    const float* data = store_.Get(doc.offset, store_guard);
     std::copy(data, data + dim_, vec.begin());
     return StatusOr<std::vector<float>>(std::move(vec));
   }
 
   IndexStats GetStats() const { return index_->GetStats(); }
+  VectorStore::Stats GetVectorStoreStats() const { return store_.GetStats(); }
+  size_t LiveDocs() const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    return live_docs_;
+  }
 
   Status Save(std::FILE* out) const;
   Status Load(std::FILE* in);
 
  private:
+  void PurgeExpired(size_t budget) {
+    if (budget == 0) return;
+    std::vector<std::pair<uint32_t, size_t>> expired;
+    {
+      std::unique_lock<std::shared_mutex> lock(mutex_);
+      size_t checked = 0;
+      if (docs_.empty()) {
+        return;
+      }
+      while (checked < budget && !docs_.empty()) {
+        if (gc_cursor_ >= docs_.size()) {
+          gc_cursor_ = 0;
+        }
+        ShardDoc& doc = docs_[gc_cursor_];
+        if (!doc.deleted && pomai_search::IsExpired(doc.expiry)) {
+          doc.deleted = true;
+          if (live_docs_ > 0) {
+            --live_docs_;
+          }
+          expired.push_back({static_cast<uint32_t>(gc_cursor_), doc.offset});
+        }
+        ++gc_cursor_;
+        ++checked;
+      }
+    }
+    if (expired.empty()) {
+      return;
+    }
+    POMAI_LOG_INFO(std::string("{\"event\":\"ttl_reclaim\",\"expired\":") +
+                   std::to_string(expired.size()) + "}");
+    for (const auto& entry : expired) {
+      keyword_index_.Delete(entry.first);
+      index_->Delete(entry.first);
+    }
+    auto store_guard = store_.AcquireWrite();
+    for (const auto& entry : expired) {
+      store_.Release(entry.second, store_guard);
+    }
+  }
+
   int dim_;
   mutable std::shared_mutex mutex_;
   std::unordered_map<std::string, uint32_t> key_to_id_;
@@ -528,6 +633,8 @@ class Shard {
   size_t max_points_;
   std::unique_ptr<Index> index_;
   KeywordIndex keyword_index_;
+  size_t gc_cursor_ = 0;
+  size_t live_docs_ = 0;
 };
 
 struct SearchEngine::Impl {

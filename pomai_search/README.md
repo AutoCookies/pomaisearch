@@ -6,19 +6,17 @@
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![C++](https://img.shields.io/badge/C++-20-blue)]()
 
-Pomai Search is an embeddable vector search engine designed for production use. It provides multiple index types optimized for different use cases, hybrid vector+keyword search, and native binary serialization for instant startup.
+Pomai Search is an embeddable vector search engine with multiple index types, hybrid vector+keyword search, and native binary snapshots for fast startup.
 
 ## Features
 
 - 🚀 **Multiple Index Types**: Flat, HNSW, IVF-Flat, IVF-SQ8
 - 🔍 **Hybrid Search**: Combine vector similarity with keyword search
 - ⚡ **Fast Startup**: O(N) load time with native binary serialization
-- 🎯 **High Recall**: Optimized HNSW implementation with >99% recall
-- 💾 **Memory Efficient**: Scalar quantization (SQ8) reduces memory by 4x
-- 🔒 **Thread-Safe**: Concurrent reads and writes
+- 🔒 **Thread-Safe**: Concurrent reads and writes with shard-local locking
 - 📊 **Metadata Filtering**: Filter by tags, source, language
-- ⏱️ **TTL Support**: Automatic expiration of documents
-- 📈 **Production Ready**: Comprehensive error handling and monitoring
+- ⏱️ **TTL Support**: Expiration filtering + reclamation on subsequent writes
+- 💾 **Vector Lifecycle**: Slot reuse to avoid unbounded memory growth
 
 ## Quick Start
 
@@ -63,7 +61,7 @@ for (const auto& item : results.value()) {
     std::cout << item.key << ": " << item.score << "\n";
 }
 
-// Save snapshot for fast restart
+// Save snapshot for fast restart (CRC + size validated)
 SnapshotWriter::Write(*engine, "index.pomai");
 
 // Load from snapshot (instant startup)
@@ -98,16 +96,7 @@ auto loaded = SnapshotReader::Read("index.pomai").value();
 
 ## Performance
 
-**Benchmark on 1M vectors (128-dim, Cosine similarity)**
-
-| Index Type | Build Time | QPS | Recall@10 | Memory |
-|-----------|-----------|-----|-----------|--------|
-| Flat | 1s | 50 | 100% | 512 MB |
-| HNSW | 120s | 5,000 | 99.5% | 720 MB |
-| IVF-Flat | 45s | 2,000 | 92% | 550 MB |
-| IVF-SQ8 | 50s | 3,500 | 96% | 180 MB |
-
-*Tested on Intel Xeon E5-2680 v4, single thread*
+See `bench/` for reproducible benchmarks. Performance and recall depend on index parameters and datasets.
 
 ## Configuration
 
@@ -136,6 +125,8 @@ cfg.hnsw_ef_search = 50;          // Search quality (default: 50)
 cfg.ivf_nlist = 100;              // Number of clusters (default: 100)
 cfg.ivf_nprobe = 10;              // Clusters to search (default: 10)
 ```
+
+**Cosine similarity note:** vectors are normalized on ingest and queries are normalized on search. `GetVector` returns the stored (normalized) vector.
 
 ## API Reference
 
@@ -169,7 +160,7 @@ SearchEngine
 └── ...
 ```
 
-Each shard is independent and can be queried in parallel. Results are merged and re-ranked.
+Each shard is independent and can be queried in parallel. Results are merged and re-ranked. See `docs/ENGINE_CONTRACT.md` for behavioral guarantees.
 
 ## Advanced Features
 
@@ -237,6 +228,9 @@ See [`examples/`](examples/) directory:
 
 - [API Reference](docs/API.md)
 - [Architecture Guide](docs/ARCHITECTURE.md)
+- [Engine Contract](docs/ENGINE_CONTRACT.md)
+- [Vector Lifecycle](docs/vector_lifecycle.md)
+- [Known Risks](docs/KNOWN_RISKS.md)
 - [Performance Tuning](docs/PERFORMANCE.md)
 - [Migration Guide](docs/MIGRATION.md)
 

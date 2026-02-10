@@ -4,6 +4,7 @@
 
 #include <thread>
 #include <chrono>
+#include <filesystem>
 
 namespace pomai_search::test {
 
@@ -77,6 +78,60 @@ POMAI_TEST(SnapshotTTL) {
   for(const auto& r : res_short.value()) if(r.key == "doc-short") found_short = true;
   EXPECT_TRUE(!found_short);
   
+  return true;
+}
+POMAI_TEST(SnapshotCorruptionFails) {
+  SearchEngineConfig cfg;
+  cfg.dim = 2;
+  cfg.num_shards = 1;
+  auto engine_or = SearchEngine::Open(cfg);
+  EXPECT_TRUE(engine_or.ok());
+  auto engine = std::move(engine_or.value());
+  float a[2] = {1.0f, 0.0f};
+  engine->Upsert("doc-a", VectorView{a, 2});
+
+  const std::string path = "tests/contracts/corrupt_snapshot.bin";
+  EXPECT_TRUE(SnapshotWriter::Write(*engine, path).ok());
+
+  std::FILE* file = std::fopen(path.c_str(), "r+b");
+  EXPECT_TRUE(file != nullptr);
+  if (file) {
+    std::fseek(file, 16, SEEK_SET);
+    unsigned char byte = 0;
+    std::fread(&byte, 1, 1, file);
+    byte ^= 0xFFu;
+    std::fseek(file, 16, SEEK_SET);
+    std::fwrite(&byte, 1, 1, file);
+    std::fclose(file);
+  }
+
+  auto restored_or = SnapshotReader::Read(path);
+  EXPECT_TRUE(!restored_or.ok());
+  return true;
+}
+
+POMAI_TEST(SnapshotPartialFails) {
+  SearchEngineConfig cfg;
+  cfg.dim = 2;
+  cfg.num_shards = 1;
+  auto engine_or = SearchEngine::Open(cfg);
+  EXPECT_TRUE(engine_or.ok());
+  auto engine = std::move(engine_or.value());
+  float a[2] = {1.0f, 0.0f};
+  engine->Upsert("doc-a", VectorView{a, 2});
+
+  const std::string path = "tests/contracts/partial_snapshot.bin";
+  EXPECT_TRUE(SnapshotWriter::Write(*engine, path).ok());
+
+  std::error_code ec;
+  auto size = std::filesystem::file_size(path, ec);
+  EXPECT_TRUE(!ec);
+  if (!ec && size > 10) {
+    std::filesystem::resize_file(path, size - 10, ec);
+  }
+
+  auto restored_or = SnapshotReader::Read(path);
+  EXPECT_TRUE(!restored_or.ok());
   return true;
 }
 

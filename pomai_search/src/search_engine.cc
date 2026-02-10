@@ -6,6 +6,7 @@
 #include <cmath>
 #include <functional>
 #include <numeric>
+#include <sstream>
 #include <shared_mutex>
 #include <unordered_map>
 #include <unordered_set>
@@ -99,7 +100,6 @@ Status SearchEngine::Upsert(std::string_view key, VectorView vec, Metadata meta,
   if (!impl_) {
     return Status(StatusCode::kInternal, "engine not initialized");
   }
-  impl_->metrics.IncrementQueries();
   size_t shard_index = StableHash64(key) % impl_->shards.size();
   auto expiry = ComputeExpiry(ttl);
   impl_->metrics.IncrementUpserts();
@@ -110,7 +110,6 @@ Status SearchEngine::Delete(std::string_view key) {
   if (!impl_) {
     return Status(StatusCode::kInternal, "engine not initialized");
   }
-  impl_->metrics.IncrementQueries();
   size_t shard_index = StableHash64(key) % impl_->shards.size();
   impl_->metrics.IncrementDeletes();
   return impl_->shards[shard_index]->Delete(key);
@@ -757,6 +756,21 @@ SearchEngine::Stats SearchEngine::GetStats() const {
   return stats;
 }
 
+SearchEngine::MemoryStats SearchEngine::GetMemoryStats() const {
+  MemoryStats stats;
+  if (!impl_) {
+    return stats;
+  }
+  for (const auto& shard : impl_->shards) {
+    auto store_stats = shard->GetVectorStoreStats();
+    stats.live_vectors += store_stats.live_vectors;
+    stats.total_vectors += store_stats.total_vectors;
+    stats.free_vectors += store_stats.free_vectors;
+    stats.bytes_allocated += store_stats.bytes_allocated;
+  }
+  return stats;
+}
+
 int SearchEngine::Dim() const {
   if (!impl_) {
     return 0;
@@ -786,7 +800,38 @@ std::string SearchEngine::MetricsJson() const {
   if (!impl_) {
     return "{}";
   }
-  return impl_->metrics.ToJson();
+  uint64_t total_live = 0;
+  uint64_t total_vectors = 0;
+  uint64_t total_free = 0;
+  uint64_t total_bytes = 0;
+  uint64_t total_blocks = 0;
+  uint64_t index_points = 0;
+  uint64_t index_deleted = 0;
+  for (const auto& shard : impl_->shards) {
+    auto stats = shard->GetVectorStoreStats();
+    total_live += stats.live_vectors;
+    total_vectors += stats.total_vectors;
+    total_free += stats.free_vectors;
+    total_bytes += stats.bytes_allocated;
+    total_blocks += stats.blocks;
+    auto index_stats = shard->GetStats();
+    index_points += index_stats.num_points;
+    index_deleted += index_stats.num_deleted;
+  }
+  std::ostringstream out;
+  out << "{";
+  out << "\"metrics\":" << impl_->metrics.ToJson() << ",";
+  out << "\"vector_store\":{";
+  out << "\"live_vectors\":" << total_live << ",";
+  out << "\"total_vectors\":" << total_vectors << ",";
+  out << "\"free_vectors\":" << total_free << ",";
+  out << "\"blocks\":" << total_blocks << ",";
+  out << "\"bytes_allocated\":" << total_bytes << "},";
+  out << "\"index\":{";
+  out << "\"points\":" << index_points << ",";
+  out << "\"deleted\":" << index_deleted << "}";
+  out << "}";
+  return out.str();
 }
 
 Status SearchEngine::Close() {
@@ -992,6 +1037,7 @@ Status Shard::Load(std::FILE* in) {
   uint64_t docs_size = 0;
   if(!fread(&docs_size, sizeof(docs_size), 1, in)) return Status(StatusCode::kInternal, "read failed");
   docs_.resize(docs_size);
+  live_docs_ = 0;
   for(auto& doc : docs_) {
     Status s = ReadString(in, doc.key);
     if(!s.ok()) return s;
@@ -1030,6 +1076,9 @@ Status Shard::Load(std::FILE* in) {
       if(!s.ok()) return s;
       doc.text = text;
     }
+    if (!doc.deleted && !IsExpired(doc.expiry)) {
+      ++live_docs_;
+    }
   }
   
   // Load key_to_id_
@@ -1055,6 +1104,7 @@ Status Shard::Load(std::FILE* in) {
   s = keyword_index_.Load(in);
   if(!s.ok()) return s;
   
+  gc_cursor_ = 0;
   return Status::Ok();
 }
 
