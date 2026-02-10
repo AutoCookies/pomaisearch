@@ -339,11 +339,10 @@ class Shard {
   }
 
   StatusOr<std::vector<ResultItem>> Search(VectorView query, int topk, const Filter& filter) const {
-    std::vector<float> normalized;
-    if (similarity_ == SearchEngineConfig::Similarity::Cosine) {
-      query = NormalizeVector(query, &normalized);
+    if (topk <= 0) {
+      return Status(StatusCode::kInvalidArgument, "topk must be positive");
     }
-    auto candidates = index_->Search(query, topk, filter);
+    auto candidates = SearchCandidates(query, topk, filter);
     if (!candidates.ok()) {
       return candidates.status();
     }
@@ -355,10 +354,6 @@ class Shard {
     for (const auto& cand : candidates.value()) {
       if (cand.id >= docs_.size()) continue;
       const auto& doc = docs_[cand.id];
-      if (doc.deleted) continue;
-      if (IsExpired(doc.expiry)) continue;
-      if (!MetadataFilterMatch(filter, doc.meta)) continue;
-
       ResultItem item;
       item.key = doc.key;
       item.score = SanitizeScore(cand.score);
@@ -389,11 +384,17 @@ class Shard {
 
   StatusOr<std::vector<CandidateResult>> SearchCandidates(VectorView query, int topk,
                                                           const Filter& filter) const {
+    if (topk <= 0) {
+      return Status(StatusCode::kInvalidArgument, "topk must be positive");
+    }
     std::vector<float> normalized;
     if (similarity_ == SearchEngineConfig::Similarity::Cosine) {
       query = NormalizeVector(query, &normalized);
     }
-    auto candidates = index_->Search(query, topk, filter);
+    constexpr int kMaxCandidateBound = 2000;
+    int bounded_topk = std::min(topk, kMaxCandidateBound);
+    int candidate_count = std::min(std::max(bounded_topk * 4, bounded_topk), kMaxCandidateBound);
+    auto candidates = index_->Search(query, candidate_count, filter);
     if (!candidates.ok()) {
       return candidates.status();
     }
@@ -402,6 +403,7 @@ class Shard {
     results.reserve(candidates.value().size());
 
     std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto store_guard = store_.AcquireRead();
     for (const auto& cand : candidates.value()) {
       if (cand.id >= docs_.size()) continue;
       const auto& doc = docs_[cand.id];
@@ -409,10 +411,13 @@ class Shard {
       if (IsExpired(doc.expiry)) continue;
       if (!MetadataFilterMatch(filter, doc.meta)) continue;
 
+      const float* vec = store_.Get(doc.offset, store_guard);
+      float exact_score = dot_func_(query.data, vec, dim_);
+
       CandidateResult item;
       item.id = cand.id;
       item.key = doc.key;
-      item.score = SanitizeScore(cand.score);
+      item.score = SanitizeScore(exact_score);
       item.meta = doc.meta;
       results.push_back(std::move(item));
     }
@@ -425,6 +430,16 @@ class Shard {
                 if (a.key != b.key) return a.key < b.key;
                 return a.id < b.id;
               });
+
+    if (static_cast<int>(results.size()) > bounded_topk) {
+      results.resize(static_cast<size_t>(bounded_topk));
+    }
+#ifndef NDEBUG
+    for (size_t i = 1; i < results.size(); ++i) {
+      assert(results[i - 1].score >= results[i].score ||
+             (results[i - 1].score == results[i].score && results[i - 1].id <= results[i].id));
+    }
+#endif
 
     return StatusOr<std::vector<CandidateResult>>(std::move(results));
   }

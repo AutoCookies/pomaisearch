@@ -291,184 +291,50 @@ StatusOr<SearchResponse> SearchEngine::SearchWithExplain(VectorView q, QueryOpti
   if (topk <= 0) {
     return Status(StatusCode::kInvalidArgument, "topk must be positive");
   }
+
   QueryExplain explain;
   explain.global_seed = impl_->cfg.global_seed;
   explain.contract_version = impl_->cfg.contract_version;
   explain.snapshot_id = ComputeSnapshotId(impl_->cfg, GetStats());
   explain.query_id = HashQuery(StableHash64("query"), "", q, topk, opt.filter);
 
-  policy.recall_bias = std::clamp(policy.recall_bias, 0.0f, 1.0f);
-  int max_candidates = policy.max_candidates > 0 ? policy.max_candidates : topk * 2;
-  max_candidates = std::max(max_candidates, topk);
-  int stage1_candidates = std::min(max_candidates, topk * 2);
-  int stage2_candidates = std::min(max_candidates, topk * 4);
+  int max_candidates = policy.max_candidates > 0 ? policy.max_candidates : topk * 4;
+  max_candidates = std::max(topk, std::min(max_candidates, 2000));
 
   auto start = std::chrono::steady_clock::now();
-  auto stage1_start = std::chrono::steady_clock::now();
-  std::vector<std::vector<Shard::CandidateResult>> shard_results(impl_->shards.size());
-  if (impl_->query_pool) {
-    std::vector<std::future<StatusOr<std::vector<Shard::CandidateResult>>>> futures;
-    futures.reserve(impl_->shards.size());
-    for (size_t i = 0; i < impl_->shards.size(); ++i) {
-      auto submitted = impl_->query_pool->Submit([
-          shard = impl_->shards[i].get(), q, stage1_candidates, filter = opt.filter]() {
-        return shard->SearchCandidates(q, stage1_candidates, filter);
-      });
-      if (!submitted.ok()) {
-        return submitted.status();
-      }
-      futures.push_back(std::move(submitted.value()));
-    }
-    for (size_t i = 0; i < futures.size(); ++i) {
-      auto result = futures[i].get();
-      if (!result.ok()) {
-        return result.status();
-      }
-      shard_results[i] = std::move(result.value());
-    }
-  } else {
-    for (size_t i = 0; i < impl_->shards.size(); ++i) {
-      auto result = impl_->shards[i]->SearchCandidates(q, stage1_candidates, opt.filter);
-      if (!result.ok()) {
-        return result.status();
-      }
-      shard_results[i] = std::move(result.value());
-    }
-  }
-  std::vector<Shard::CandidateResult> merged_candidates;
-  for (const auto& shard_result : shard_results) {
-    merged_candidates.insert(merged_candidates.end(), shard_result.begin(), shard_result.end());
-  }
-  std::sort(merged_candidates.begin(), merged_candidates.end(),
-            [](const Shard::CandidateResult& a, const Shard::CandidateResult& b) {
-              float score_a = SanitizeScore(a.score);
-              float score_b = SanitizeScore(b.score);
-              if (score_a != score_b) {
-                return score_a > score_b;
-              }
-              if (a.key != b.key) {
-                return a.key < b.key;
-              }
-              return a.id < b.id;
-            });
-  if (static_cast<int>(merged_candidates.size()) > stage1_candidates) {
-    merged_candidates.resize(static_cast<size_t>(stage1_candidates));
-  }
-  auto stage1_end = std::chrono::steady_clock::now();
-  StageExplain stage1;
-  stage1.name = "vector_stage_1";
-  stage1.index = impl_->cfg.index_type == SearchEngineConfig::IndexType::Hnsw ? "hnsw" : "flat";
-  stage1.ef_search = impl_->cfg.hnsw_ef_search;
-  stage1.max_candidates = stage1_candidates;
-  stage1.time_ms =
-      std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(stage1_end - stage1_start)
-          .count();
-  stage1.candidates_out = static_cast<int>(merged_candidates.size());
-  explain.execution_plan.push_back(stage1);
-
-  bool run_stage2 = policy.recall_bias > 0.5f && stage2_candidates > stage1_candidates;
-  if (policy.max_latency_ms > 0) {
-    auto elapsed = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
-        stage1_end - start);
-    if (elapsed.count() >= static_cast<double>(policy.max_latency_ms)) {
-      run_stage2 = false;
-    }
+  auto results_or = Search(q, opt);
+  if (!results_or.ok()) {
+    return results_or.status();
   }
 
-  if (run_stage2) {
-    auto stage2_start = std::chrono::steady_clock::now();
-    std::vector<std::vector<Shard::CandidateResult>> stage2_shards(impl_->shards.size());
-    if (impl_->query_pool) {
-      std::vector<std::future<StatusOr<std::vector<Shard::CandidateResult>>>> futures;
-      futures.reserve(impl_->shards.size());
-      for (size_t i = 0; i < impl_->shards.size(); ++i) {
-        auto submitted = impl_->query_pool->Submit([
-            shard = impl_->shards[i].get(), q, stage2_candidates, filter = opt.filter]() {
-          return shard->SearchCandidates(q, stage2_candidates, filter);
-        });
-        if (!submitted.ok()) {
-          return submitted.status();
-        }
-        futures.push_back(std::move(submitted.value()));
-      }
-      for (size_t i = 0; i < futures.size(); ++i) {
-        auto result = futures[i].get();
-        if (!result.ok()) {
-          return result.status();
-        }
-        stage2_shards[i] = std::move(result.value());
-      }
-    } else {
-      for (size_t i = 0; i < impl_->shards.size(); ++i) {
-        auto result = impl_->shards[i]->SearchCandidates(q, stage2_candidates, opt.filter);
-        if (!result.ok()) {
-          return result.status();
-        }
-        stage2_shards[i] = std::move(result.value());
-      }
-    }
-    merged_candidates.clear();
-    for (const auto& shard_result : stage2_shards) {
-      merged_candidates.insert(merged_candidates.end(), shard_result.begin(), shard_result.end());
-    }
-    std::sort(merged_candidates.begin(), merged_candidates.end(),
-              [](const Shard::CandidateResult& a, const Shard::CandidateResult& b) {
-                float score_a = SanitizeScore(a.score);
-                float score_b = SanitizeScore(b.score);
-                if (score_a != score_b) {
-                  return score_a > score_b;
-                }
-                if (a.key != b.key) {
-                  return a.key < b.key;
-                }
-                return a.id < b.id;
-              });
-    if (static_cast<int>(merged_candidates.size()) > stage2_candidates) {
-      merged_candidates.resize(static_cast<size_t>(stage2_candidates));
-    }
-    auto stage2_end = std::chrono::steady_clock::now();
-    StageExplain stage2;
-    stage2.name = "vector_stage_2";
-    stage2.index = impl_->cfg.index_type == SearchEngineConfig::IndexType::Hnsw ? "hnsw" : "flat";
-    stage2.ef_search = impl_->cfg.hnsw_ef_search + static_cast<int>(policy.recall_bias * 20.0f);
-    stage2.max_candidates = stage2_candidates;
-    stage2.time_ms = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
-                         stage2_end - stage2_start)
-                         .count();
-    stage2.candidates_out = static_cast<int>(merged_candidates.size());
-    explain.execution_plan.push_back(stage2);
-  }
+  StageExplain stage;
+  stage.name = "canonical_search";
+  stage.index = impl_->cfg.index_type == SearchEngineConfig::IndexType::Hnsw
+                    ? "hnsw"
+                    : (impl_->cfg.index_type == SearchEngineConfig::IndexType::IvfFlat
+                           ? "ivf_flat"
+                           : (impl_->cfg.index_type == SearchEngineConfig::IndexType::IvfSq8 ? "ivf_sq8"
+                                                                                               : "flat"));
+  stage.max_candidates = max_candidates;
+  stage.candidates_out = static_cast<int>(results_or.value().size());
+  stage.time_ms = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+                      std::chrono::steady_clock::now() - start)
+                      .count();
+  explain.execution_plan.push_back(stage);
 
   SearchResponse response;
   response.explain = std::move(explain);
-  for (size_t i = 0; i < merged_candidates.size(); ++i) {
-    const auto& cand = merged_candidates[i];
-    ResultItem item;
-    item.key = cand.key;
-    item.score = SanitizeScore(cand.score);
-    item.meta = cand.meta;
-    item.internal_id = cand.id;
-    response.results.push_back(std::move(item));
+  response.results = std::move(results_or.value());
+  for (size_t i = 0; i < response.results.size(); ++i) {
     ResultExplain detail;
-    detail.vector_score_raw = SanitizeScore(cand.score);
+    detail.vector_score_raw = SanitizeScore(response.results[i].score);
     detail.vector_score_normed = detail.vector_score_raw;
-    detail.keyword_score_raw = 0.0f;
-    detail.keyword_score_normed = 0.0f;
-    detail.fusion_method = "weighted_sum";
+    detail.fusion_method = "exact_rerank";
     detail.final_score = detail.vector_score_raw;
     detail.rank_before_fusion = static_cast<int>(i) + 1;
     detail.rank_after_fusion = static_cast<int>(i) + 1;
     response.explain.result_details.push_back(detail);
-    if (static_cast<int>(response.results.size()) >= topk) {
-      break;
-    }
   }
-  if (static_cast<int>(response.results.size()) > topk) {
-    response.results.resize(static_cast<size_t>(topk));
-  }
-  auto end = std::chrono::steady_clock::now();
-  double ms = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(end - start).count();
-  impl_->metrics.RecordQueryLatency(ms);
   return StatusOr<SearchResponse>(std::move(response));
 }
 
