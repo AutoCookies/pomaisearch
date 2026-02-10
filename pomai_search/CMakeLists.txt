@@ -119,6 +119,7 @@ add_executable(pomai_search_tests
   tests/test_snapshot.cc
   tests/test_concurrency.cc
   tests/test_engine_sharding.cc
+  tests/test_ivf_maintenance.cc
 )
 
 target_link_libraries(pomai_search_tests PRIVATE pomai_search_core)
@@ -129,6 +130,14 @@ target_compile_options(pomai_search_tests PRIVATE -Wall -Wextra -Wpedantic -Werr
 
 add_test(NAME pomai_search_tests COMMAND pomai_search_tests)
 set_tests_properties(pomai_search_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(pomai_search_stress_concurrency
+  app/pomai_search_stress_concurrency.cc
+)
+target_link_libraries(pomai_search_stress_concurrency PRIVATE pomai_search_core)
+target_compile_options(pomai_search_stress_concurrency PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_test(NAME pomai_search_stress_concurrency COMMAND pomai_search_stress_concurrency 10)
+set_tests_properties(pomai_search_stress_concurrency PROPERTIES LABELS stress)
 
 add_executable(pomai_search_bench_flat
   bench/bench_flat.cc

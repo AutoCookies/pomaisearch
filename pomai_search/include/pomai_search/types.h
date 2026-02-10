@@ -47,6 +47,8 @@ struct SearchEngineConfig {
   uint32_t hnsw_seed = 42;
   int ivf_nlist = 100;
   int ivf_nprobe = 10;
+  int max_candidates = 2000;
+  int rerank_factor = 4;
   uint64_t global_seed = 0;
   uint32_t contract_version = 3;
 };

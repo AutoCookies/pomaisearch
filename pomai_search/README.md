@@ -21,3 +21,10 @@ Index families (Flat/HNSW/IVF) are routing implementations only; returned rankin
 - `docs/SEARCH_SAFETY_RAILS.md`
 - `docs/EXPLAIN_TRACE.md`
 - `docs/CONCURRENCY_MODEL.md`
+
+
+## Phase 2 Stability Closure
+- IVF-Flat and IVF-SQ8 upserts are generation-versioned; stale postings are filtered at gather-time and compacted list-locally.
+- Compaction triggers: stale ratio threshold, max list entries, or max list bytes.
+- Deterministic degradation: bounded max candidates + bounded rerank factor + bounded IVF probes.
+- Search rerank now snapshots candidate metadata under shard lock, scores outside the lock, and validates generation before return.

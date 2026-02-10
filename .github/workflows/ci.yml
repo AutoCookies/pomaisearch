@@ -38,3 +38,16 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: ctest --test-dir build-asan --output-on-failure
+
+
+  stress-nightly:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build-stress -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build-stress --target pomai_search_stress_concurrency
+      - name: Stress tests
+        run: ctest --test-dir build-stress -L stress --output-on-failure

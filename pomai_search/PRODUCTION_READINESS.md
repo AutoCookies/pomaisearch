@@ -33,3 +33,10 @@ This document defines release gates and operational expectations for Pomai Searc
 - Unit tests: `ctest --output-on-failure`
 - Benchmarks: see `bench/` for `bench_flat`, `bench_ivf`, `bench_hnsw`, `bench_sq8`.
 
+
+
+## Phase 2 Stability Closure
+- IVF-Flat and IVF-SQ8 upserts are generation-versioned; stale postings are filtered at gather-time and compacted list-locally.
+- Compaction triggers: stale ratio threshold, max list entries, or max list bytes.
+- Deterministic degradation: bounded max candidates + bounded rerank factor + bounded IVF probes.
+- Search rerank now snapshots candidate metadata under shard lock, scores outside the lock, and validates generation before return.
