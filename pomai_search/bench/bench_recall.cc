@@ -78,11 +78,11 @@ int main(int argc, char** argv) {
   auto cfg = pomai_search::ParseArgs(argc, argv);
   pomai_search::DotFunc dot_func = pomai_search::GetDotFunc(cfg.avx2);
   pomai_search::VectorStore store(cfg.dim, 32, cfg.n);
-  pomai_search::FlatIndex flat(&store, cfg.dim, pomai_search::SearchEngineConfig::Similarity::Dot, dot_func,
-                               32);
-  pomai_search::HnswIndex hnsw(&store, cfg.dim, pomai_search::SearchEngineConfig::Similarity::Dot, dot_func,
-                               cfg.n, cfg.hnsw_m, cfg.hnsw_ef_construction, cfg.hnsw_ef_search,
-                               cfg.seed);
+  pomai_search::FlatIndex flat(&store, cfg.dim, pomai_search::SearchEngineConfig::Similarity::Dot,
+                               dot_func, cfg.n);
+  pomai_search::HnswIndex hnsw(&store, cfg.dim, pomai_search::SearchEngineConfig::Similarity::Dot,
+                               dot_func, cfg.n, cfg.hnsw_m, cfg.hnsw_ef_construction,
+                               cfg.hnsw_ef_search, cfg.seed);
 
   std::mt19937 rng(cfg.seed);
   std::uniform_real_distribution<float> dist(0.0f, 1.0f);
@@ -137,12 +137,12 @@ int main(int argc, char** argv) {
   }
   double recall = recall_hits / static_cast<double>(cfg.queries);
 
-  double flat_avg = std::accumulate(flat_latencies.begin(), flat_latencies.end(), 0.0) /
-                    flat_latencies.size();
+  double flat_avg =
+      std::accumulate(flat_latencies.begin(), flat_latencies.end(), 0.0) / flat_latencies.size();
   double flat_p50 = pomai_search::Percentile(flat_latencies, 0.50);
   double flat_p95 = pomai_search::Percentile(flat_latencies, 0.95);
-  double hnsw_avg = std::accumulate(hnsw_latencies.begin(), hnsw_latencies.end(), 0.0) /
-                    hnsw_latencies.size();
+  double hnsw_avg =
+      std::accumulate(hnsw_latencies.begin(), hnsw_latencies.end(), 0.0) / hnsw_latencies.size();
   double hnsw_p50 = pomai_search::Percentile(hnsw_latencies, 0.50);
   double hnsw_p95 = pomai_search::Percentile(hnsw_latencies, 0.95);
 

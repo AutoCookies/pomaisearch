@@ -21,7 +21,7 @@ cd pomaisearch/pomai_search
 mkdir build && cd build
 cmake -DCMAKE_BUILD_TYPE=Release ..
 make -j$(nproc)
-
+ctest --output-on-failure
 # Run tests
 ./pomai_search_tests
 ```

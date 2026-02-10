@@ -757,6 +757,31 @@ SearchEngine::Stats SearchEngine::GetStats() const {
   return stats;
 }
 
+int SearchEngine::Dim() const {
+  if (!impl_) {
+    return 0;
+  }
+  return impl_->cfg.dim;
+}
+
+StatusOr<std::vector<SnapshotRecord>> SearchEngine::ExportRecords(const Filter& filter) const {
+  if (!impl_) {
+    return Status(StatusCode::kInternal, "engine not initialized");
+  }
+  std::vector<SnapshotRecord> output;
+  for (const auto& shard : impl_->shards) {
+    std::vector<SnapshotRecord> shard_records;
+    shard->ExportRecords(&shard_records);
+    for (auto& record : shard_records) {
+      if (!MetadataFilterMatch(filter, record.meta)) {
+        continue;
+      }
+      output.push_back(std::move(record));
+    }
+  }
+  return StatusOr<std::vector<SnapshotRecord>>(std::move(output));
+}
+
 std::string SearchEngine::MetricsJson() const {
   if (!impl_) {
     return "{}";

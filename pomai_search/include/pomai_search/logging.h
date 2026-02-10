@@ -1,6 +1,8 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
+#include <mutex>
 #include <string>
 
 namespace pomai_search {
@@ -20,10 +22,13 @@ class Logger {
   LogLevel level() const { return level_.load(); }
 
   void Log(LogLevel level, const std::string& message);
+  void set_callback(std::function<void(LogLevel, const std::string&)> callback);
 
  private:
   Logger() = default;
   std::atomic<LogLevel> level_{LogLevel::kInfo};
+  std::mutex callback_mutex_;
+  std::function<void(LogLevel, const std::string&)> callback_;
 };
 
 }  // namespace pomai_search

@@ -18,15 +18,15 @@
 #include "core/index/hnsw_index.h"
 #include "core/index/ivf_flat_index.h"
 #include "core/index/ivf_sq8_index.h"
+#include "core/kernels/kernels.h"
+#include "core/serialize/snapshot.h"
+#include "core/vectorstore/vector_store.h"
+#include "pomai_search/hash.h"
 #include "pomai_search/observability/metrics.h"
 #include "pomai_search/scoring.h"
 #include "pomai_search/search_engine.h"
-#include "core/kernels/kernels.h"
 #include "pomai_search/thread_pool.h"
-#include "core/vectorstore/vector_store.h"
-#include "core/serialize/snapshot.h"
 #include "pomai_search/types.h"
-#include "pomai_search/hash.h"
 
 namespace pomai_search {
 
@@ -37,8 +37,7 @@ inline std::vector<std::string> Tokenize(std::string_view text) {
   std::string current;
   for (char c : text) {
     if (std::isalnum(static_cast<unsigned char>(c))) {
-      current.push_back(
-          static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+      current.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
     } else if (!current.empty()) {
       tokens.push_back(current);
       current.clear();
@@ -100,8 +99,7 @@ class KeywordIndex {
       if (df_it != doc_freq_.end()) {
         df = std::max(1, df_it->second);
       }
-      float idf =
-          std::log(1.0f + static_cast<float>(doc_count_) / static_cast<float>(df));
+      float idf = std::log(1.0f + static_cast<float>(doc_count_) / static_cast<float>(df));
       for (const auto& entry : posting_it->second) {
         scores[entry.first] += static_cast<float>(entry.second) * idf;
       }
@@ -111,23 +109,20 @@ class KeywordIndex {
     for (const auto& pair : scores) {
       results.push_back(Candidate{pair.first, pair.second});
     }
-    std::sort(
-        results.begin(), results.end(), [](const Candidate& a, const Candidate& b) {
-          float score_a = SanitizeScore(a.score);
-          float score_b = SanitizeScore(b.score);
-          if (score_a != score_b) {
-            return score_a > score_b;
-          }
-          return a.id < b.id;
-        });
+    std::sort(results.begin(), results.end(), [](const Candidate& a, const Candidate& b) {
+      float score_a = SanitizeScore(a.score);
+      float score_b = SanitizeScore(b.score);
+      if (score_a != score_b) {
+        return score_a > score_b;
+      }
+      return a.id < b.id;
+    });
     if (static_cast<int>(results.size()) > topk) {
       results.resize(static_cast<size_t>(topk));
     }
     return results;
   }
 
-
-  
   Status Save(std::FILE* out) const;
   Status Load(std::FILE* in);
 
@@ -183,8 +178,8 @@ class Shard {
       uint32_t seed =
           static_cast<uint32_t>(cfg.global_seed ^ pomai_search::StableHash64("hnsw_seed"));
       index_ = std::make_unique<pomai_search::HnswIndex>(
-          &store_, dim, cfg.similarity, dot_func_, max_points_,
-          cfg.hnsw_m, cfg.hnsw_ef_construction, cfg.hnsw_ef_search, seed);
+          &store_, dim, cfg.similarity, dot_func_, max_points_, cfg.hnsw_m,
+          cfg.hnsw_ef_construction, cfg.hnsw_ef_search, seed);
     } else if (cfg.index_type == pomai_search::SearchEngineConfig::IndexType::IvfFlat) {
       pomai_search::IvfFlatIndex::Config ivf_cfg;
       ivf_cfg.nlist = cfg.ivf_nlist;
@@ -201,7 +196,7 @@ class Shard {
       index_ = std::make_unique<pomai_search::IvfSq8Index>(&store_, dim, sq_cfg);
     } else {
       index_ = std::make_unique<pomai_search::FlatIndex>(&store_, dim, cfg.similarity, dot_func_,
-                                           max_points_);
+                                                         max_points_);
     }
   }
 
@@ -227,7 +222,7 @@ class Shard {
 
     // Append to VectorStore
     size_t offset = store_.Append(vec.data);
-    
+
     // Compute norm
     float norm = 0.0f;
     float dot_prod = dot_func_(vec.data, vec.data, dim_);
@@ -257,10 +252,10 @@ class Shard {
       key_to_id_.emplace(doc.key, id);
       docs_.push_back(doc);
     }
-    
+
     // Upsert Keyword Index (thread-safe)
     keyword_index_.Upsert(id, text);
-    
+
     return Status::Ok();
   }
 
@@ -288,29 +283,26 @@ class Shard {
     return StatusOr<bool>(exists);
   }
 
-  StatusOr<std::vector<ResultItem>> Search(VectorView query, int topk,
-                                           const Filter& filter) const {
+  StatusOr<std::vector<ResultItem>> Search(VectorView query, int topk, const Filter& filter) const {
+    // Hold shard read-lock across index search + doc materialization.
+    // This prevents VectorStore::Append() reallocation during scoring.
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+
     auto candidates = index_->Search(query, topk, filter);
     if (!candidates.ok()) {
       return candidates.status();
     }
+
     std::vector<ResultItem> results;
     results.reserve(candidates.value().size());
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+
     for (const auto& cand : candidates.value()) {
-      if (cand.id >= docs_.size()) {
-        continue;
-      }
+      if (cand.id >= docs_.size()) continue;
       const auto& doc = docs_[cand.id];
-      if (doc.deleted) {
-        continue;
-      }
-      if (IsExpired(doc.expiry)) {
-          continue;
-      }
-      if (!MetadataFilterMatch(filter, doc.meta)) {
-        continue;
-      }
+      if (doc.deleted) continue;
+      if (IsExpired(doc.expiry)) continue;
+      if (!MetadataFilterMatch(filter, doc.meta)) continue;
+
       ResultItem item;
       item.key = doc.key;
       item.score = SanitizeScore(cand.score);
@@ -318,23 +310,20 @@ class Shard {
       item.internal_id = cand.id;
       results.push_back(std::move(item));
     }
-    std::sort(results.begin(), results.end(),
-              [](const ResultItem& a, const ResultItem& b) {
-                float score_a = SanitizeScore(a.score);
-                float score_b = SanitizeScore(b.score);
-                if (score_a != score_b) {
-                  return score_a > score_b;
-                }
-                if (a.key != b.key) {
-                  return a.key < b.key;
-                }
-                return a.internal_id < b.internal_id;
-              });
+
+    std::sort(results.begin(), results.end(), [](const ResultItem& a, const ResultItem& b) {
+      float score_a = SanitizeScore(a.score);
+      float score_b = SanitizeScore(b.score);
+      if (score_a != score_b) return score_a > score_b;
+      if (a.key != b.key) return a.key < b.key;
+      return a.internal_id < b.internal_id;
+    });
+
     return StatusOr<std::vector<ResultItem>>(std::move(results));
   }
-  
+
   // Reusable strict weak ordering, but kept inline for simplicity in this extraction
-  
+
   struct CandidateResult {
     uint32_t id = 0;
     std::string key;
@@ -342,26 +331,25 @@ class Shard {
     float score = 0.0f;
   };
 
-  StatusOr<std::vector<CandidateResult>> SearchCandidates(
-      VectorView query, int topk, const Filter& filter) const {
+  StatusOr<std::vector<CandidateResult>> SearchCandidates(VectorView query, int topk,
+                                                          const Filter& filter) const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+
     auto candidates = index_->Search(query, topk, filter);
     if (!candidates.ok()) {
       return candidates.status();
     }
+
     std::vector<CandidateResult> results;
     results.reserve(candidates.value().size());
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+
     for (const auto& cand : candidates.value()) {
-      if (cand.id >= docs_.size()) {
-        continue;
-      }
+      if (cand.id >= docs_.size()) continue;
       const auto& doc = docs_[cand.id];
       if (doc.deleted) continue;
       if (IsExpired(doc.expiry)) continue;
-      
-      if (!MetadataFilterMatch(filter, doc.meta)) {
-        continue;
-      }
+      if (!MetadataFilterMatch(filter, doc.meta)) continue;
+
       CandidateResult item;
       item.id = cand.id;
       item.key = doc.key;
@@ -369,18 +357,16 @@ class Shard {
       item.meta = doc.meta;
       results.push_back(std::move(item));
     }
+
     std::sort(results.begin(), results.end(),
               [](const CandidateResult& a, const CandidateResult& b) {
                 float score_a = SanitizeScore(a.score);
                 float score_b = SanitizeScore(b.score);
-                if (score_a != score_b) {
-                  return score_a > score_b;
-                }
-                if (a.key != b.key) {
-                  return a.key < b.key;
-                }
+                if (score_a != score_b) return score_a > score_b;
+                if (a.key != b.key) return a.key < b.key;
                 return a.id < b.id;
               });
+
     return StatusOr<std::vector<CandidateResult>>(std::move(results));
   }
 
@@ -426,15 +412,19 @@ class Shard {
     return StatusOr<std::vector<CandidateResult>>(std::move(results));
   }
 
-  StatusOr<std::vector<ResultItem>> SearchHybrid(std::string_view text,
-                                                 VectorView query, bool has_vector,
-                                                 float alpha, int topk,
+  StatusOr<std::vector<ResultItem>> SearchHybrid(std::string_view text, VectorView query,
+                                                 bool has_vector, float alpha, int topk,
                                                  const Filter& filter) const {
     std::vector<Candidate> keyword_candidates;
     if (!text.empty()) {
       keyword_candidates = keyword_index_.Search(text, topk * 2);
     }
+
     std::vector<Candidate> vector_candidates;
+
+    // Lock before ANY index_->Search() to prevent VectorStore reallocation race.
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+
     if (has_vector) {
       auto vector_results = index_->Search(query, topk * 2, filter);
       if (!vector_results.ok()) {
@@ -442,6 +432,7 @@ class Shard {
       }
       vector_candidates = vector_results.value();
     }
+
     std::unordered_map<uint32_t, std::pair<float, float>> scores;
     for (const auto& cand : keyword_candidates) {
       scores[cand.id].second = cand.score;
@@ -449,20 +440,21 @@ class Shard {
     for (const auto& cand : vector_candidates) {
       scores[cand.id].first = cand.score;
     }
+
     std::vector<ResultItem> results;
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    results.reserve(scores.size());
+
     for (const auto& pair : scores) {
       uint32_t id = pair.first;
-      if (id >= docs_.size()) {
-        continue;
-      }
+      if (id >= docs_.size()) continue;
+
       const auto& doc = docs_[id];
       if (doc.deleted) continue;
-       if (IsExpired(doc.expiry)) continue;
-      if (!MetadataFilterMatch(filter, doc.meta)) {
-        continue;
-      }
+      if (IsExpired(doc.expiry)) continue;
+      if (!MetadataFilterMatch(filter, doc.meta)) continue;
+
       float score = alpha * pair.second.first + (1.0f - alpha) * pair.second.second;
+
       ResultItem item;
       item.key = doc.key;
       item.score = SanitizeScore(score);
@@ -470,18 +462,15 @@ class Shard {
       item.internal_id = id;
       results.push_back(std::move(item));
     }
-    std::sort(results.begin(), results.end(),
-              [](const ResultItem& a, const ResultItem& b) {
-                float score_a = SanitizeScore(a.score);
-                float score_b = SanitizeScore(b.score);
-                if (score_a != score_b) {
-                  return score_a > score_b;
-                }
-                if (a.key != b.key) {
-                  return a.key < b.key;
-                }
-                return a.internal_id < b.internal_id;
-              });
+
+    std::sort(results.begin(), results.end(), [](const ResultItem& a, const ResultItem& b) {
+      float score_a = SanitizeScore(a.score);
+      float score_b = SanitizeScore(b.score);
+      if (score_a != score_b) return score_a > score_b;
+      if (a.key != b.key) return a.key < b.key;
+      return a.internal_id < b.internal_id;
+    });
+
     if (static_cast<int>(results.size()) > topk) {
       results.resize(static_cast<size_t>(topk));
     }
@@ -500,7 +489,7 @@ class Shard {
       record.expiry = doc.expiry;
       record.text = doc.text;
       record.vector.resize(static_cast<size_t>(dim_));
-      
+
       const float* data = store_.Get(doc.offset);
       std::copy(data, data + dim_, record.vector.begin());
       out->push_back(std::move(record));
@@ -516,7 +505,7 @@ class Shard {
     const auto& doc = docs_[it->second];
     if (doc.deleted) return Status(StatusCode::kNotFound, "key not found");
     if (IsExpired(doc.expiry)) return Status(StatusCode::kNotFound, "key not found");
-    
+
     std::vector<float> vec(dim_);
     const float* data = store_.Get(doc.offset);
     std::copy(data, data + dim_, vec.begin());

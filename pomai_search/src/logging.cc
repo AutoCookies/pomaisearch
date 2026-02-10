@@ -14,8 +14,22 @@ Logger& Logger::Instance() {
   return instance;
 }
 
+void Logger::set_callback(std::function<void(LogLevel, const std::string&)> callback) {
+  std::lock_guard<std::mutex> lock(callback_mutex_);
+  callback_ = std::move(callback);
+}
+
 void Logger::Log(LogLevel level, const std::string& message) {
   if (level < level_.load()) {
+    return;
+  }
+  std::function<void(LogLevel, const std::string&)> callback;
+  {
+    std::lock_guard<std::mutex> lock(callback_mutex_);
+    callback = callback_;
+  }
+  if (callback) {
+    callback(level, message);
     return;
   }
   static std::mutex mutex;
